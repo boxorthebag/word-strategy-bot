@@ -68,7 +68,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 <header>
   <h1>Word Strategy Bot</h1>
   <span class="badge">Wordle + Canuckle testing</span>
-  <span class="badge">entropy + solve probability + automatic game logging v14</span>
+  <span class="badge">entropy + solve probability + solution-first v15</span>
 </header>
 
 <main>
@@ -198,7 +198,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
   <div class="note">
     <b>Best solve</b> favours a word that can actually be the answer.
     <b>Best information</b> favours the guess that splits the remaining pool most evenly.
-    <b>Hybrid</b> balances both. When the candidate pool is tiny, the same word may legitimately be best in more than one category.
+    <b>Hybrid</b> balances both. The controller switches to <b>Best solve</b> when the board is strongly constrained: 3 or fewer candidates, 2 or more greens, or 1 green with 10 or fewer candidates.
   </div>
 </section>
 </main>
@@ -544,8 +544,23 @@ function wcChooseNext(){
   }
 
   const r=scoreRecommendations(candidates,br);
-  let chosen = candidates.length<=3 ? (r.bestSolve||r.bestHybrid||r.bestInfo) : (r.bestHybrid||r.bestSolve||r.bestInfo);
-  let source = candidates.length<=3 ? 'Best solve' : 'Hybrid';
+
+  // Once the board is fairly constrained, stop wasting turns on exotic probe words.
+  // Prefer an actual remaining answer when:
+  //   - 3 or fewer candidates remain, OR
+  //   - two or more positions are already green, OR
+  //   - one position is green and 10 or fewer candidates remain.
+  const greenPositions=new Set();
+  for(const [g,p] of br){
+    for(let i=0;i<5;i++) if(p[i]==='2') greenPositions.add(i);
+  }
+  const greens=greenPositions.size;
+  const solveFirst = candidates.length<=3 || greens>=2 || (greens>=1 && candidates.length<=10);
+
+  let chosen = solveFirst
+    ? (r.bestSolve||r.bestHybrid||r.bestInfo)
+    : (r.bestHybrid||r.bestSolve||r.bestInfo);
+  let source = solveFirst ? 'Best solve' : 'Hybrid';
 
   if(!chosen || played.has(chosen.word)){
     const fallback=candidates.find(w=>!played.has(w));
