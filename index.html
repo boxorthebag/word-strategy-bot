@@ -53,6 +53,10 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .testtable th,.testtable td{padding:7px 8px;border-bottom:1px solid #e4e4e1;text-align:right}
 .testtable th:first-child,.testtable td:first-child{text-align:left}
 .good{font-weight:700}
+.logtable{width:100%;border-collapse:collapse;font-size:12px;min-width:780px}
+.logtable th,.logtable td{padding:7px 8px;border-bottom:1px solid #e4e4e1;text-align:left;vertical-align:top}
+.logtable th{position:sticky;top:0;background:#fff;z-index:1}
+.logpath{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap}
 textarea{width:100%;min-height:120px}
 .toggle{display:flex;align-items:center;gap:7px}
 hr{border:0;border-top:1px solid var(--line);margin:18px 0}
@@ -64,7 +68,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 <header>
   <h1>Word Strategy Bot</h1>
   <span class="badge">Wordle + Canuckle testing</span>
-  <span class="badge">entropy + solve probability + Work controller v9</span>
+  <span class="badge">entropy + solve probability + automatic game logging</span>
 </header>
 
 <main>
@@ -131,6 +135,21 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 
     <div id="wcHistory" class="cands" style="margin-top:10px;display:none"></div>
   </div>
+
+  <hr>
+  <h3>Results History</h3>
+  <div class="note">
+    Completed controller games are saved automatically in this browser, including
+    every guess, feedback pattern, candidate counts, recommendation source, entropy,
+    expected remaining pool, worst case, and the bot's main alternatives.
+  </div>
+  <div class="row" style="margin-top:10px">
+    <button id="logCsv" class="secondary">Download full CSV</button>
+    <button id="logJson" class="secondary">Download JSON</button>
+    <button id="logClear" class="danger">Clear saved history</button>
+  </div>
+  <div id="logSummary" style="margin-top:10px"></div>
+  <div id="logTableWrap" style="overflow:auto;margin-top:10px"></div>
 
   <hr>
   <h3>Archive test mode</h3>
@@ -449,132 +468,171 @@ document.getElementById('simulate').onclick=simulate;
 
 
 
-const WC_KEY='wordStrategyBot_workController_v1';
-let wcState={game:0,active:false,solved:false,history:[],currentGuess:'slate',source:'Opening word'};
 
-function wcSave(){
-  try{localStorage.setItem(WC_KEY,JSON.stringify(wcState));}catch(e){}
-}
+const WC_KEY='wordStrategyBot_workController_v2';
+const LOG_KEY='wordStrategyBot_completedGames_v1';
+
+let wcState={
+  game:0,active:false,solved:false,history:[],
+  currentGuess:'slate',
+  currentDecision:{source:'Opening word',candidateCount:null,entropy:null,expected:null,worst:null,alternatives:{}}
+};
+let gameLogs=[];
+
+function safeNum(v){ return (typeof v==='number' && Number.isFinite(v)) ? v : null; }
+function wcSave(){ try{localStorage.setItem(WC_KEY,JSON.stringify(wcState));}catch(e){} }
+function logsSave(){ try{localStorage.setItem(LOG_KEY,JSON.stringify(gameLogs));}catch(e){} }
+
 function wcLoad(){
   try{
     const x=JSON.parse(localStorage.getItem(WC_KEY)||'null');
-    if(x && typeof x==='object') wcState=x;
+    if(x && typeof x==='object'){
+      wcState=x;
+      if(!wcState.currentDecision){
+        wcState.currentDecision={source:wcState.source||'Recovered state',candidateCount:null,entropy:null,expected:null,worst:null,alternatives:{}};
+      }
+    }
   }catch(e){}
+  try{
+    const x=JSON.parse(localStorage.getItem(LOG_KEY)||'[]');
+    if(Array.isArray(x)) gameLogs=x;
+  }catch(e){ gameLogs=[]; }
 }
+
 function wcResetState(keepGame=false){
   const g=keepGame ? (wcState.game||0) : 0;
-  wcState={game:g,active:false,solved:false,history:[],currentGuess:'slate',source:'Opening word'};
-  wcSave();
-  wcRender();
+  wcState={game:g,active:false,solved:false,history:[],currentGuess:'slate',
+    currentDecision:{source:'Opening word',candidateCount:null,entropy:null,expected:null,worst:null,alternatives:{}}};
+  wcSave(); wcRender();
 }
+
 function wcStartGame(){
   wcState={
-    game:(wcState.game||0)+1,
-    active:true,
-    solved:false,
-    history:[],
-    currentGuess:'slate',
-    source:'Opening word'
+    game:(wcState.game||0)+1, active:true, solved:false, history:[], currentGuess:'slate',
+    currentDecision:{source:'Opening word',candidateCount:(customList?customList.length:answerWords.length),entropy:null,expected:null,worst:null,alternatives:{}}
   };
-  wcSave();
-  wcRender();
+  wcSave(); wcRender();
   setTimeout(()=>document.getElementById('wcFeedback')?.focus(),50);
 }
-function wcCandidates(){
+
+function wcCandidatesFromHistory(history=wcState.history){
   const base=(customList?customList:answerWords);
-  return filterAnswers(base,wcState.history.map(x=>[x.guess,x.pattern]));
+  return filterAnswers(base,history.map(x=>[x.guess,x.pattern]));
 }
+
+function summarizeRec(o){
+  if(!o) return null;
+  return {word:o.word,entropy:safeNum(o.H),expected:safeNum(o.expected),worst:safeNum(o.worst),splits:safeNum(o.splits),isCandidate:!!o.isCandidate};
+}
+
 function wcChooseNext(){
   const br=wcState.history.map(x=>[x.guess,x.pattern]);
-  const candidates=wcCandidates();
-  if(!candidates.length) return {error:'No candidates match this feedback.'};
+  const candidates=wcCandidatesFromHistory();
+  if(!candidates.length) return {error:'No candidates match this feedback.',count:0};
 
   const played=new Set(wcState.history.map(x=>x.guess));
   if(candidates.length===1 && !played.has(candidates[0])){
-    return {word:candidates[0],source:'Only candidate',count:1};
+    return {word:candidates[0],source:'Only candidate',count:1,entropy:null,expected:1,worst:1,
+      alternatives:{bestSolve:candidates[0],bestHybrid:candidates[0],bestInfo:candidates[0]}};
   }
 
   const r=scoreRecommendations(candidates,br);
-  let chosen = candidates.length<=3
-    ? (r.bestSolve||r.bestHybrid||r.bestInfo)
-    : (r.bestHybrid||r.bestSolve||r.bestInfo);
+  let chosen = candidates.length<=3 ? (r.bestSolve||r.bestHybrid||r.bestInfo) : (r.bestHybrid||r.bestSolve||r.bestInfo);
+  let source = candidates.length<=3 ? 'Best solve' : 'Hybrid';
 
   if(!chosen || played.has(chosen.word)){
     const fallback=candidates.find(w=>!played.has(w));
-    if(fallback) return {word:fallback,source:'Fallback candidate',count:candidates.length};
-    return {error:'No unplayed recommendation available.'};
+    if(fallback){
+      return {word:fallback,source:'Fallback candidate',count:candidates.length,entropy:null,expected:null,worst:null,
+        alternatives:{bestSolve:r.bestSolve?.word||null,bestHybrid:r.bestHybrid?.word||null,bestInfo:r.bestInfo?.word||null}};
+    }
+    return {error:'No unplayed recommendation available.',count:candidates.length};
   }
+
   return {
-    word:chosen.word,
-    source:(candidates.length<=3?'Best solve':'Hybrid'),
-    count:candidates.length
+    word:chosen.word,source,count:candidates.length,
+    entropy:safeNum(chosen.H),expected:safeNum(chosen.expected),worst:safeNum(chosen.worst),
+    alternatives:{bestSolve:summarizeRec(r.bestSolve),bestHybrid:summarizeRec(r.bestHybrid),bestInfo:summarizeRec(r.bestInfo)}
   };
 }
+
+function finalizeGame(){
+  const last=wcState.history[wcState.history.length-1];
+  const entry={
+    id:`${Date.now()}-${wcState.game}`,
+    gameNumber:wcState.game,
+    completedAt:new Date().toISOString(),
+    answer:last.guess.toUpperCase(),
+    guesses:wcState.history.length,
+    solved:true,
+    path:wcState.history.map(x=>x.guess.toUpperCase()),
+    turns:wcState.history.map((x,i)=>({
+      turn:i+1, guess:x.guess.toUpperCase(), feedback:x.pattern,
+      candidatesBefore:x.candidatesBefore, candidatesAfter:x.candidatesAfter,
+      source:x.source, entropy:x.entropy, expected:x.expected, worst:x.worst,
+      alternatives:x.alternatives||{}
+    }))
+  };
+  gameLogs.push(entry);
+  logsSave();
+  renderLogs();
+}
+
 function wcSubmitFeedback(){
   if(!wcState.active || wcState.solved) return;
   const el=document.getElementById('wcFeedback');
   const p=(el.value||'').trim();
-  if(!/^[012]{5}$/.test(p)){
-    alert('Enter exactly five digits using only 0, 1, and 2.');
-    el.focus();
-    return;
-  }
+  if(!/^[012]{5}$/.test(p)){ alert('Enter exactly five digits using only 0, 1, and 2.'); el.focus(); return; }
 
   const guess=wcState.currentGuess.toLowerCase();
-  wcState.history.push({guess,pattern:p,source:wcState.source});
+  const d=wcState.currentDecision||{};
+  const beforeCandidates=d.candidateCount ?? (customList?customList.length:answerWords.length);
+  const tempHistory=[...wcState.history,{guess,pattern:p}];
+  const afterCandidates=wcCandidatesFromHistory(tempHistory).length;
+
+  wcState.history.push({
+    guess,pattern:p,source:d.source||'',
+    candidatesBefore:beforeCandidates,candidatesAfter:afterCandidates,
+    entropy:safeNum(d.entropy),expected:safeNum(d.expected),worst:safeNum(d.worst),
+    alternatives:d.alternatives||{}
+  });
 
   if(p==='22222'){
-    wcState.solved=true;
-    wcState.active=false;
-    wcSave();
-    el.value='';
-    wcRender();
-    return;
+    wcState.solved=true; wcState.active=false; wcSave(); el.value=''; finalizeGame(); wcRender(); return;
   }
 
   const next=wcChooseNext();
   if(next.error){
     wcState.active=false;
-    wcState.source=next.error;
-    wcSave();
-    el.value='';
-    wcRender();
-    return;
+    wcState.currentDecision={source:next.error,candidateCount:next.count??afterCandidates,entropy:null,expected:null,worst:null,alternatives:{}};
+    wcSave(); el.value=''; wcRender(); return;
   }
 
   wcState.currentGuess=next.word;
-  wcState.source=next.source;
-  wcSave();
-  el.value='';
-  wcRender();
+  wcState.currentDecision={source:next.source,candidateCount:next.count,entropy:next.entropy,expected:next.expected,worst:next.worst,alternatives:next.alternatives||{}};
+  wcSave(); el.value=''; wcRender();
   setTimeout(()=>el.focus(),30);
 }
+
 function wcUndo(){
   if(!wcState.history.length) return;
   const last=wcState.history.pop();
+  if(wcState.solved && gameLogs.length && gameLogs[gameLogs.length-1].gameNumber===wcState.game){
+    gameLogs.pop(); logsSave(); renderLogs();
+  }
   wcState.currentGuess=last.guess;
-  wcState.source=last.source||'Previous guess';
-  wcState.solved=false;
-  wcState.active=true;
-  wcSave();
-  wcRender();
+  wcState.currentDecision={source:last.source||'Previous guess',candidateCount:last.candidatesBefore??null,entropy:last.entropy??null,expected:last.expected??null,worst:last.worst??null,alternatives:last.alternatives||{}};
+  wcState.solved=false; wcState.active=true; wcSave(); wcRender();
   setTimeout(()=>document.getElementById('wcFeedback')?.focus(),30);
 }
+
 function wcRender(){
   const game=document.getElementById('wcGame');
   if(!game) return;
-
   const turn=wcState.history.length+1;
   game.textContent=wcState.game||'—';
-  document.getElementById('wcTurn').textContent=wcState.active||wcState.solved ? `${Math.min(turn,6)}/6` : '—';
-
-  let c='—';
-  if(wcState.game && wcState.history.length){
-    try{c=wcCandidates().length;}catch(e){}
-  } else if(wcState.active) {
-    c=answerWords.length;
-  }
-  document.getElementById('wcCandidates').textContent=c;
+  document.getElementById('wcTurn').textContent=(wcState.active||wcState.solved)?`${Math.min(turn,6)}/6`:'—';
+  document.getElementById('wcCandidates').textContent=wcState.active ? (wcState.currentDecision?.candidateCount ?? '—') : '—';
 
   const status=document.getElementById('wcStatus');
   const playBox=document.getElementById('wcPlayBox');
@@ -585,19 +643,23 @@ function wcRender(){
     status.textContent='SOLVED';
     playBox.style.display='block';
     document.getElementById('wcPlayWord').textContent='SOLVED';
-    document.getElementById('wcSource').textContent='Start a new game when ready.';
+    document.getElementById('wcSource').textContent='Game saved automatically. Start a new game when ready.';
     feedbackArea.style.display='none';
   } else if(wcState.active){
     status.textContent='Playing';
     playBox.style.display='block';
     document.getElementById('wcPlayWord').textContent='PLAY: '+wcState.currentGuess.toUpperCase();
-    document.getElementById('wcSource').textContent=wcState.source||'';
+    const d=wcState.currentDecision||{}, bits=[];
+    if(d.source) bits.push(d.source);
+    if(d.candidateCount!=null) bits.push(`${d.candidateCount} candidates`);
+    if(d.entropy!=null) bits.push(`entropy ${d.entropy.toFixed(2)}`);
+    document.getElementById('wcSource').textContent=bits.join(' • ');
     feedbackArea.style.display='block';
   } else if(wcState.game){
     status.textContent='Stopped';
     playBox.style.display='block';
     document.getElementById('wcPlayWord').textContent='CHECK FEEDBACK';
-    document.getElementById('wcSource').textContent=wcState.source||'Controller stopped.';
+    document.getElementById('wcSource').textContent=wcState.currentDecision?.source||'Controller stopped.';
     feedbackArea.style.display='none';
   } else {
     status.textContent='Idle';
@@ -607,28 +669,90 @@ function wcRender(){
 
   if(wcState.history.length){
     history.style.display='block';
-    history.textContent=wcState.history.map((x,i)=>
-      `${i+1}. ${x.guess.toUpperCase()}  ${x.pattern}  [${x.source||''}]`
-    ).join('\n');
+    history.textContent=wcState.history.map((x,i)=>`${i+1}. ${x.guess.toUpperCase()}  ${x.pattern}  ${x.candidatesBefore ?? '?'}→${x.candidatesAfter ?? '?'}  [${x.source||''}]`).join('\n');
   } else {
     history.style.display='none';
     history.textContent='';
   }
-
   document.getElementById('wcUndo').disabled=!wcState.history.length;
 }
+
+function renderLogs(){
+  const summary=document.getElementById('logSummary');
+  const wrap=document.getElementById('logTableWrap');
+  if(!summary||!wrap) return;
+
+  if(!gameLogs.length){
+    summary.innerHTML='<div class="small">No completed games saved yet.</div>';
+    wrap.innerHTML=''; return;
+  }
+
+  const n=gameLogs.length;
+  const avg=gameLogs.reduce((s,g)=>s+g.guesses,0)/n;
+  const dist={1:0,2:0,3:0,4:0,5:0,6:0};
+  gameLogs.forEach(g=>{ if(dist[g.guesses]!=null) dist[g.guesses]++; });
+  const le3=gameLogs.filter(g=>g.guesses<=3).length;
+  const le4=gameLogs.filter(g=>g.guesses<=4).length;
+
+  summary.innerHTML=`<div class="kpis">
+    <div class="kpi"><span class="small">Games</span><b>${n}</b></div>
+    <div class="kpi"><span class="small">Average</span><b>${avg.toFixed(2)}</b></div>
+    <div class="kpi"><span class="small">≤ 3 guesses</span><b>${(100*le3/n).toFixed(1)}%</b></div>
+    <div class="kpi"><span class="small">≤ 4 guesses</span><b>${(100*le4/n).toFixed(1)}%</b></div>
+  </div><div class="small" style="margin-top:8px">2:${dist[2]} • 3:${dist[3]} • 4:${dist[4]} • 5:${dist[5]} • 6:${dist[6]}</div>`;
+
+  const rows=[...gameLogs].reverse().map(g=>`<tr>
+    <td>${g.gameNumber}</td><td><b>${g.answer}</b></td><td>${g.guesses}</td>
+    <td class="logpath">${g.path.join(' → ')}</td><td>${new Date(g.completedAt).toLocaleString()}</td>
+  </tr>`).join('');
+
+  wrap.innerHTML=`<table class="logtable"><thead><tr><th>Game</th><th>Answer</th><th>Guesses</th><th>Path</th><th>Completed</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function downloadTextFile(name,textValue,type='text/plain'){
+  const blob=new Blob([textValue],{type});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url; a.download=name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),500);
+}
+function csvCell(v){ return `"${String(v??'').replaceAll('"','""')}"`; }
+
+function exportLogsCsv(){
+  const rows=[['game','answer','guesses','turn','guess','feedback','candidates_before','candidates_after','source','entropy','expected_pool','worst_case','best_solve','best_hybrid','best_info','completed_at']];
+  for(const g of gameLogs){
+    for(const t of g.turns){
+      const a=t.alternatives||{};
+      rows.push([
+        g.gameNumber,g.answer,g.guesses,t.turn,t.guess,t.feedback,t.candidatesBefore,t.candidatesAfter,t.source,
+        t.entropy,t.expected,t.worst,
+        typeof a.bestSolve==='object' ? a.bestSolve?.word : a.bestSolve,
+        typeof a.bestHybrid==='object' ? a.bestHybrid?.word : a.bestHybrid,
+        typeof a.bestInfo==='object' ? a.bestInfo?.word : a.bestInfo,
+        g.completedAt
+      ]);
+    }
+  }
+  downloadTextFile('word-strategy-bot-results.csv',rows.map(r=>r.map(csvCell).join(',')).join('\n'),'text/csv');
+}
+function exportLogsJson(){ downloadTextFile('word-strategy-bot-results.json',JSON.stringify(gameLogs,null,2),'application/json'); }
+function clearLogs(){
+  if(!confirm('Clear all saved completed-game history from this browser?')) return;
+  gameLogs=[]; logsSave(); renderLogs();
+}
+
 document.getElementById('wcStart').onclick=wcStartGame;
 document.getElementById('wcSubmit').onclick=wcSubmitFeedback;
 document.getElementById('wcUndo').onclick=wcUndo;
 document.getElementById('wcReset').onclick=()=>wcResetState(false);
-document.getElementById('wcFeedback').addEventListener('keydown',(e)=>{
-  if(e.key==='Enter'){e.preventDefault();wcSubmitFeedback();}
-});
-document.getElementById('wcFeedback').addEventListener('input',(e)=>{
-  e.target.value=e.target.value.replace(/[^012]/g,'').slice(0,5);
-});
+document.getElementById('wcFeedback').addEventListener('keydown',(e)=>{ if(e.key==='Enter'){e.preventDefault();wcSubmitFeedback();} });
+document.getElementById('wcFeedback').addEventListener('input',(e)=>{ e.target.value=e.target.value.replace(/[^012]/g,'').slice(0,5); });
+document.getElementById('logCsv').onclick=exportLogsCsv;
+document.getElementById('logJson').onclick=exportLogsJson;
+document.getElementById('logClear').onclick=clearLogs;
+
 wcLoad();
-setTimeout(wcRender,0);
+setTimeout(()=>{wcRender();renderLogs();},0);
 
 let lastBatchResults=[];
 
