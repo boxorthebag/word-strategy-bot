@@ -68,7 +68,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 <header>
   <h1>Word Strategy Bot</h1>
   <span class="badge">Wordle + Canuckle testing</span>
-  <span class="badge">entropy + solve probability + solution-first v15</span>
+  <span class="badge">entropy + solve probability + synced board + override v16</span>
 </header>
 
 <main>
@@ -122,10 +122,13 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
       <div class="row" style="margin-top:6px">
         <input id="wcFeedback" type="text" maxlength="5" inputmode="numeric"
                placeholder="01220" style="width:130px;font-size:22px;letter-spacing:3px;text-align:center">
+        <input id="wcPlayedWord" type="text" maxlength="5"
+               placeholder="actual word (optional)"
+               style="width:210px;text-transform:uppercase">
         <button id="wcSubmit">Submit result</button>
-      <button id="wcReject" class="secondary">Rejected by game</button>
+        <button id="wcReject" class="secondary">Rejected by game</button>
       </div>
-      <div class="small" style="margin-top:6px">Example: 00002 = first four gray, last letter green. Enter 3 by itself to mark the word solved. If the game refuses the suggested word, click Rejected by game.</div>
+      <div class="small" style="margin-top:6px">Example: 00002 = first four gray, last letter green. Enter 3 by itself to mark the word solved. If you play a different word, type it in “actual word” OR enter it in the next empty row of the visual board before submitting.</div>
     </div>
 
     <div class="row" style="margin-top:10px">
@@ -518,7 +521,10 @@ function wcStartGame(){
     game:(wcState.game||0)+1, active:true, solved:false, history:[], currentGuess:'slate',
     currentDecision:{source:'Opening word',candidateCount:(customList?customList.length:answerWords.length),entropy:null,expected:null,worst:null,alternatives:{}}
   };
-  wcSave(); wcRender();
+  wcSave();
+  if(document.getElementById('wcPlayedWord')) document.getElementById('wcPlayedWord').value='';
+  clearVisualBoard();
+  wcRender();
   setTimeout(()=>document.getElementById('wcFeedback')?.focus(),50);
 }
 
@@ -591,13 +597,82 @@ function finalizeGame(){
     turns:wcState.history.map((x,i)=>({
       turn:i+1, guess:x.guess.toUpperCase(), feedback:x.pattern,
       candidatesBefore:x.candidatesBefore, candidatesAfter:x.candidatesAfter,
-      source:x.source, entropy:x.entropy, expected:x.expected, worst:x.worst,
+      source:x.source, suggestedWord:(x.suggestedWord||x.guess).toUpperCase(),
+      manualOverride:!!x.manualOverride,
+      entropy:x.entropy, expected:x.expected, worst:x.worst,
       alternatives:x.alternatives||{}
     }))
   };
   gameLogs.push(entry);
   logsSave();
   renderLogs();
+}
+
+
+function clearVisualBoard(){
+  if(!rows || !rows.length) return;
+  for(const r of rows){
+    for(let i=0;i<5;i++){
+      r.inputs[i].value='';
+      r.states[i].dataset.state='0';
+      r.states[i].classList.remove('gray','yellow','green','canucklegreen');
+      r.states[i].style.background='#fff';
+      r.states[i].style.color='#111';
+      r.states[i].style.borderColor='#cfcfcf';
+      r.states[i].title='';
+    }
+  }
+}
+
+function setVisualTileState(inp,state){
+  inp.dataset.state=String(state);
+  inp.style.background='';
+  inp.style.color='';
+  inp.style.borderColor='';
+  paintState(inp);
+}
+
+function syncVisualBoard(){
+  if(!rows || !rows.length) return;
+  clearVisualBoard();
+
+  wcState.history.slice(0,6).forEach((h,rowIndex)=>{
+    const word=(h.guess||'').toUpperCase();
+    const pattern=h.pattern||'00000';
+    for(let i=0;i<5;i++){
+      rows[rowIndex].inputs[i].value=word[i]||'';
+      setVisualTileState(rows[rowIndex].states[i], pattern[i]||'0');
+    }
+  });
+}
+
+function getVisualOverrideWord(){
+  const rowIndex=wcState.history.length;
+  if(rowIndex<0 || rowIndex>=rows.length) return '';
+  const letters=rows[rowIndex].inputs.map(x=>x.value.trim().toLowerCase());
+  const any=letters.some(Boolean);
+  if(!any) return '';
+  const word=letters.join('');
+  if(word.length!==5 || !/^[a-z]{5}$/.test(word)) return '__PARTIAL__';
+  return word;
+}
+
+function getActualPlayedWord(){
+  const explicit=(document.getElementById('wcPlayedWord')?.value||'').trim().toLowerCase();
+  if(explicit){
+    if(!/^[a-z]{5}$/.test(explicit)) return {error:'The actual word must be exactly five letters.'};
+    return {word:explicit,overridden:explicit!==wcState.currentGuess.toLowerCase(),via:'override box'};
+  }
+
+  const visual=getVisualOverrideWord();
+  if(visual==='__PARTIAL__'){
+    return {error:'The next visual-board row contains only part of a word. Complete it or clear it before submitting.'};
+  }
+  if(visual){
+    return {word:visual,overridden:visual!==wcState.currentGuess.toLowerCase(),via:'visual board'};
+  }
+
+  return {word:wcState.currentGuess.toLowerCase(),overridden:false,via:'suggestion'};
 }
 
 function wcSubmitFeedback(){
@@ -607,33 +682,43 @@ function wcSubmitFeedback(){
   if(p==='3') p='22222';
   if(!/^[012]{5}$/.test(p)){ alert('Enter five digits using only 0, 1, and 2 — or enter 3 by itself for a win.'); el.focus(); return; }
 
-  const guess=wcState.currentGuess.toLowerCase();
+  const actual=getActualPlayedWord();
+  if(actual.error){ alert(actual.error); return; }
+
+  const guess=actual.word;
+  const suggested=wcState.currentGuess.toLowerCase();
   const d=wcState.currentDecision||{};
   const beforeCandidates=d.candidateCount ?? (customList?customList.length:answerWords.length);
   const tempHistory=[...wcState.history,{guess,pattern:p}];
   const afterCandidates=wcCandidatesFromHistory(tempHistory).length;
 
+  const source = actual.overridden
+    ? `Manual override via ${actual.via}; bot suggested ${suggested.toUpperCase()}`
+    : (d.source||'');
+
   wcState.history.push({
-    guess,pattern:p,source:d.source||'',
+    guess,pattern:p,source,
+    suggestedWord:suggested,
+    manualOverride:actual.overridden,
     candidatesBefore:beforeCandidates,candidatesAfter:afterCandidates,
     entropy:safeNum(d.entropy),expected:safeNum(d.expected),worst:safeNum(d.worst),
     alternatives:d.alternatives||{}
   });
 
   if(p==='22222'){
-    wcState.solved=true; wcState.active=false; wcSave(); el.value=''; finalizeGame(); wcRender(); return;
+    wcState.solved=true; wcState.active=false; wcSave(); el.value=''; if(document.getElementById('wcPlayedWord')) document.getElementById('wcPlayedWord').value=''; finalizeGame(); syncVisualBoard(); wcRender(); return;
   }
 
   const next=wcChooseNext();
   if(next.error){
     wcState.active=false;
     wcState.currentDecision={source:next.error,candidateCount:next.count??afterCandidates,entropy:null,expected:null,worst:null,alternatives:{}};
-    wcSave(); el.value=''; wcRender(); return;
+    wcSave(); el.value=''; if(document.getElementById('wcPlayedWord')) document.getElementById('wcPlayedWord').value=''; syncVisualBoard(); wcRender(); return;
   }
 
   wcState.currentGuess=next.word;
   wcState.currentDecision={source:next.source,candidateCount:next.count,entropy:next.entropy,expected:next.expected,worst:next.worst,alternatives:next.alternatives||{}};
-  wcSave(); el.value=''; wcRender();
+  wcSave(); el.value=''; if(document.getElementById('wcPlayedWord')) document.getElementById('wcPlayedWord').value=''; syncVisualBoard(); wcRender();
   setTimeout(()=>el.focus(),30);
 }
 
@@ -645,11 +730,12 @@ function wcUndo(){
   }
   wcState.currentGuess=last.guess;
   wcState.currentDecision={source:last.source||'Previous guess',candidateCount:last.candidatesBefore??null,entropy:last.entropy??null,expected:last.expected??null,worst:last.worst??null,alternatives:last.alternatives||{}};
-  wcState.solved=false; wcState.active=true; wcSave(); wcRender();
+  wcState.solved=false; wcState.active=true; if(document.getElementById('wcPlayedWord')) document.getElementById('wcPlayedWord').value=''; wcSave(); wcRender();
   setTimeout(()=>document.getElementById('wcFeedback')?.focus(),30);
 }
 
 function wcRender(){
+  syncVisualBoard();
   const game=document.getElementById('wcGame');
   if(!game) return;
   const turn=wcState.history.length+1;
@@ -742,12 +828,12 @@ function downloadTextFile(name,textValue,type='text/plain'){
 function csvCell(v){ return `"${String(v??'').replaceAll('"','""')}"`; }
 
 function exportLogsCsv(){
-  const rows=[['game','answer','guesses','turn','guess','feedback','candidates_before','candidates_after','source','entropy','expected_pool','worst_case','best_solve','best_hybrid','best_info','completed_at']];
+  const rows=[['game','answer','guesses','turn','guess','feedback','candidates_before','candidates_after','source','suggested_word','manual_override','entropy','expected_pool','worst_case','best_solve','best_hybrid','best_info','completed_at']];
   for(const g of gameLogs){
     for(const t of g.turns){
       const a=t.alternatives||{};
       rows.push([
-        g.gameNumber,g.answer,g.guesses,t.turn,t.guess,t.feedback,t.candidatesBefore,t.candidatesAfter,t.source,
+        g.gameNumber,g.answer,g.guesses,t.turn,t.guess,t.feedback,t.candidatesBefore,t.candidatesAfter,t.source,t.suggestedWord,t.manualOverride,
         t.entropy,t.expected,t.worst,
         typeof a.bestSolve==='object' ? a.bestSolve?.word : a.bestSolve,
         typeof a.bestHybrid==='object' ? a.bestHybrid?.word : a.bestHybrid,
@@ -792,6 +878,9 @@ document.getElementById('wcFeedback').addEventListener('input',(e)=>{
   let v=e.target.value.replace(/[^0123]/g,'').slice(0,5);
   if(v.includes('3')) v='3';
   e.target.value=v;
+});
+document.getElementById('wcPlayedWord').addEventListener('input',(e)=>{
+  e.target.value=e.target.value.toUpperCase().replace(/[^A-Z]/g,'').slice(0,5);
 });
 document.getElementById('logCsv').onclick=exportLogsCsv;
 document.getElementById('logJson').onclick=exportLogsJson;
@@ -909,16 +998,3 @@ function downloadBatchCsv(){
   const blob=new Blob([csv],{type:'text/csv'});
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a');
-  a.href=url;a.download='word-strategy-bot-archive-results.csv';
-  document.body.appendChild(a);a.click();a.remove();
-  setTimeout(()=>URL.revokeObjectURL(url),500);
-}
-
-document.getElementById('batchTest').onclick=runBatch;
-document.getElementById('batchCsv').onclick=downloadBatchCsv;
-
-buildGrid();
-loadLists();
-</script>
-</body>
-</html>
