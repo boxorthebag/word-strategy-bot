@@ -69,7 +69,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 <header>
   <h1>Word Strategy Bot</h1>
   <span class="badge">Wordle + Canuckle testing</span>
-  <span class="badge">entropy + solve probability + synced board + override v17</span>
+  <span class="badge">entropy + solve probability + controller diagnostics v18</span>
 </header>
 
 <main>
@@ -126,19 +126,20 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
         <input id="wcPlayedWord" type="text" maxlength="5"
                placeholder="actual word (optional)"
                style="width:210px;text-transform:uppercase">
-        <button id="wcSubmit">Submit result</button>
-        <button id="wcReject" class="secondary">Rejected by game</button>
+        <button id="wcSubmit" onclick="safeSubmitResult()">Submit result</button>
+        <button id="wcReject" class="secondary" onclick="safeRejectWord()">Rejected by game</button>
       </div>
       <div class="small" style="margin-top:6px">Example: 00002 = first four gray, last letter green. Enter 3 by itself to mark the word solved. If you play a different word, type it in “actual word” OR enter it in the next empty row of the visual board before submitting.</div>
     </div>
 
     <div class="row" style="margin-top:10px">
-      <button id="wcStart">Start New Game</button>
-      <button id="wcUndo" class="secondary" disabled>Undo Last Result</button>
+      <button id="wcStart" onclick="safeStartGame()">Start New Game</button>
+      <button id="wcUndo" class="secondary" disabled onclick="safeUndo()">Undo Last Result</button>
       <button id="wcReset" class="secondary">Reset Controller</button>
     </div>
 
     <div id="wcHistory" class="cands" style="margin-top:10px;display:none"></div>
+    <div id="wcReadyLine" class="small" style="margin-top:8px"><b>Controller:</b> initializing…</div>
   </div>
 
   <hr>
@@ -894,10 +895,54 @@ function wcRejectCurrent(){
   wcSave(); wcRender();
 }
 
-document.getElementById('wcStart').onclick=wcStartGame;
-document.getElementById('wcSubmit').onclick=wcSubmitFeedback;
-document.getElementById('wcReject').onclick=wcRejectCurrent;
-document.getElementById('wcUndo').onclick=wcUndo;
+
+function wcShowReady(msg, isError=false){
+  const el=document.getElementById('wcReadyLine');
+  if(!el) return;
+  el.innerHTML=`<b>Controller:</b> ${msg}`;
+  el.style.color=isError ? '#9e2727' : '';
+}
+function safeStartGame(){
+  try{
+    wcStartGame();
+    wcShowReady('ready');
+  }catch(err){
+    wcShowReady('ERROR — '+(err?.message||String(err)), true);
+    console.error(err);
+  }
+}
+function safeSubmitResult(){
+  try{
+    wcSubmitFeedback();
+    wcShowReady('ready');
+  }catch(err){
+    wcShowReady('ERROR — '+(err?.message||String(err)), true);
+    console.error(err);
+  }
+}
+function safeRejectWord(){
+  try{
+    wcRejectCurrent();
+    wcShowReady('ready');
+  }catch(err){
+    wcShowReady('ERROR — '+(err?.message||String(err)), true);
+    console.error(err);
+  }
+}
+function safeUndo(){
+  try{
+    wcUndo();
+    wcShowReady('ready');
+  }catch(err){
+    wcShowReady('ERROR — '+(err?.message||String(err)), true);
+    console.error(err);
+  }
+}
+
+
+
+
+
 document.getElementById('wcReset').onclick=()=>wcResetState(false);
 document.getElementById('wcFeedback').addEventListener('keydown',(e)=>{ if(e.key==='Enter'){e.preventDefault();wcSubmitFeedback();} });
 document.getElementById('wcFeedback').addEventListener('input',(e)=>{
@@ -912,8 +957,17 @@ document.getElementById('logCsv').onclick=exportLogsCsv;
 document.getElementById('logJson').onclick=exportLogsJson;
 document.getElementById('logClear').onclick=clearLogs;
 
-wcLoad();
-setTimeout(()=>{wcRender();renderLogs();},0);
+try{
+  wcLoad();
+  buildGrid();
+  clearVisualBoard();
+  wcRender();
+  renderLogs();
+  wcShowReady('ready');
+}catch(err){
+  wcShowReady('ERROR — '+(err?.message||String(err)), true);
+  console.error(err);
+}
 
 let lastBatchResults=[];
 
@@ -944,57 +998,3 @@ function simulateSecret(secret, opener='slate'){
     }
   }
 
-  return {answer:secret,solved:false,guesses:null,reason:'Not solved in 6',turns};
-}
-
-async function runBatch(){
-  const btn=document.getElementById('batchTest');
-  const words=cleanWords(document.getElementById('archiveWords').value);
-  if(!words.length){alert('Paste at least one five-letter archive answer first.');return;}
-
-  btn.disabled=true;
-  btn.textContent='Testing…';
-  document.getElementById('batchSummary').innerHTML='<div class="small">Running archive test…</div>';
-  document.getElementById('batchDetails').style.display='none';
-  await new Promise(r=>setTimeout(r,25));
-
-  const results=[];
-  for(let i=0;i<words.length;i++){
-    results.push(simulateSecret(words[i]));
-    if(i%10===0){
-      document.getElementById('batchSummary').innerHTML=
-        `<div class="small">Testing ${i+1} of ${words.length}…</div>`;
-      await new Promise(r=>setTimeout(r,0));
-    }
-  }
-  lastBatchResults=results;
-
-  const solved=results.filter(x=>x.solved);
-  const failures=results.filter(x=>!x.solved);
-  const dist={1:0,2:0,3:0,4:0,5:0,6:0};
-  solved.forEach(x=>dist[x.guesses]++);
-  const avg=solved.length ? solved.reduce((s,x)=>s+x.guesses,0)/solved.length : 0;
-  const within3=solved.filter(x=>x.guesses<=3).length;
-  const within4=solved.filter(x=>x.guesses<=4).length;
-
-  document.getElementById('batchSummary').innerHTML = `
-    <div class="kpis">
-      <div class="kpi"><span class="small">Tested</span><b>${results.length}</b></div>
-      <div class="kpi"><span class="small">Win rate</span><b>${(100*solved.length/results.length).toFixed(1)}%</b></div>
-      <div class="kpi"><span class="small">Avg guesses</span><b>${avg.toFixed(2)}</b></div>
-      <div class="kpi"><span class="small">Failures</span><b>${failures.length}</b></div>
-    </div>
-    <table class="testtable">
-      <tr><th>Metric</th><th>Count</th><th>Rate</th></tr>
-      <tr><td>Solved in 2</td><td>${dist[2]}</td><td>${(100*dist[2]/results.length).toFixed(1)}%</td></tr>
-      <tr><td>Solved in 3</td><td>${dist[3]}</td><td>${(100*dist[3]/results.length).toFixed(1)}%</td></tr>
-      <tr><td>Solved in 4</td><td>${dist[4]}</td><td>${(100*dist[4]/results.length).toFixed(1)}%</td></tr>
-      <tr><td>Solved in 5</td><td>${dist[5]}</td><td>${(100*dist[5]/results.length).toFixed(1)}%</td></tr>
-      <tr><td>Solved in 6</td><td>${dist[6]}</td><td>${(100*dist[6]/results.length).toFixed(1)}%</td></tr>
-      <tr class="good"><td>3 or fewer</td><td>${within3}</td><td>${(100*within3/results.length).toFixed(1)}%</td></tr>
-      <tr class="good"><td>4 or fewer</td><td>${within4}</td><td>${(100*within4/results.length).toFixed(1)}%</td></tr>
-    </table>`;
-
-  const details=results.map(r=>{
-    const path=r.turns.map(t=>t.guess.toUpperCase()).join(' → ');
-    return `${r.answer.toUpperCase().padEnd(6)}  ${r.solved ? r.guesses+' guesses' : 'FAIL'}  ${path}${r.reason?'  ['+r.reason+']':''}`;
