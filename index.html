@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Word Strategy Bot</title>
+<style>
+:root{
+  --bg:#f7f7f5; --panel:#fff; --ink:#171717; --muted:#666;
+  --line:#d8d8d5; --green:#6aaa64; --yellow:#c9b458; --gray:#787c7e;
+  --red:#d71920; --accent:#111;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+header{padding:20px 22px;border-bottom:1px solid var(--line);background:#fff;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+h1{font-size:24px;margin:0}
+.badge{font-size:12px;border:1px solid #bbb;border-radius:999px;padding:5px 9px;background:#fafafa}
+main{max-width:1180px;margin:0 auto;padding:20px;display:grid;grid-template-columns:1.05fr .95fr;gap:18px}
+@media(max-width:900px){main{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;box-shadow:0 2px 12px rgba(0,0,0,.035)}
+h2{font-size:18px;margin:0 0 12px}
+h3{font-size:15px;margin:18px 0 8px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+label{font-size:13px;color:#444}
+select,input,button,textarea{font:inherit}
+select,input[type=text],input[type=number],textarea{
+  border:1px solid #bbb;border-radius:9px;background:#fff;padding:9px 10px
+}
+button{border:0;border-radius:9px;background:#111;color:white;padding:10px 14px;font-weight:650;cursor:pointer}
+button.secondary{background:#ececea;color:#111;border:1px solid #d2d2cf}
+button.danger{background:#9e2727}
+button:disabled{opacity:.45;cursor:not-allowed}
+.grid{display:grid;gap:8px}
+.guessrow{display:grid;grid-template-columns:repeat(5,58px);gap:8px;align-items:center}
+.tilewrap{position:relative;width:58px;height:58px}
+.tile{width:58px;height:58px;border:2px solid #cfcfcf;border-radius:7px;text-transform:uppercase;text-align:center;font-size:28px;font-weight:800;padding:0;background:#fff;color:#111}
+.tile.gray{background:var(--gray);border-color:var(--gray);color:#fff}
+.tile.yellow{background:var(--yellow);border-color:var(--yellow);color:#fff}
+.tile.green{background:var(--green);border-color:var(--green);color:#fff}
+.tile.canucklegreen{background:var(--red);border-color:var(--red);color:#fff}
+.statehit{position:absolute;inset:0;background:transparent;border:0;padding:0;border-radius:7px}
+.statehit:focus{outline:3px solid rgba(0,0,0,.18);outline-offset:2px}
+.small{font-size:12px;color:var(--muted)}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.kpi{background:#f4f4f1;border-radius:10px;padding:10px}
+.kpi b{font-size:22px;display:block}
+.reco{border:1px solid var(--line);border-radius:12px;padding:12px;margin:8px 0}
+.reco strong{font-size:20px;letter-spacing:2px}
+.reco .meta{font-size:12px;color:#666;margin-top:4px}
+.cands{max-height:250px;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;line-height:1.7;background:#fafafa;border:1px solid #e0e0dd;border-radius:10px;padding:10px}
+.testtable{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}
+.testtable th,.testtable td{padding:7px 8px;border-bottom:1px solid #e4e4e1;text-align:right}
+.testtable th:first-child,.testtable td:first-child{text-align:left}
+.good{font-weight:700}
+textarea{width:100%;min-height:120px}
+.toggle{display:flex;align-items:center;gap:7px}
+hr{border:0;border-top:1px solid var(--line);margin:18px 0}
+.note{background:#fffbe8;border:1px solid #eadf9b;border-radius:10px;padding:10px;font-size:13px}
+.footer{max-width:1180px;margin:0 auto 30px;padding:0 20px;color:#666;font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Word Strategy Bot</h1>
+  <span class="badge">Wordle + Canuckle testing</span>
+  <span class="badge">entropy + solve probability + archive testing</span>
+</header>
+
+<main>
+<section class="card">
+  <h2>Enter the board</h2>
+  <div class="row" style="margin-bottom:12px">
+    <label>Game
+      <select id="game">
+        <option value="wordle">Wordle</option>
+        <option value="canuckle">Canuckle</option>
+      </select>
+    </label>
+    <label class="toggle"><input type="checkbox" id="hardMode"> Hard-mode recommendations</label>
+    </div>
+
+  <div id="guessGrid" class="grid"></div>
+  <div class="small" style="margin-top:8px">Type the letters normally. Backspace/Delete erases backward across the whole row, so you can clear a guess without clicking previous squares. Then use the tile control to cycle gray → yellow → green/red. Duplicate-letter handling matches Wordle rules.</div>
+
+  <div class="note" style="margin-top:12px"><b>Easy entry:</b> type each guess straight across. Backspace/Delete walks backward through the row and erases letters automatically. Use the small dot in the lower-right of each tile to change that tile from gray to yellow to green.</div>
+  <div class="row" style="margin-top:14px">
+    <button id="analyze">Analyze board</button>
+    <button id="reset" class="secondary">Reset</button>
+    <button id="todayExample" class="secondary">Load today's example</button>
+  </div>
+
+  <hr>
+  <h3>Archive test mode</h3>
+  <div class="row">
+    <input id="secret" type="text" maxlength="5" placeholder="secret answer, e.g. PEEVE" style="width:180px;text-transform:uppercase">
+    <button id="simulate" class="secondary">Auto-play archive word</button>
+  </div>
+  <div id="simlog" class="small" style="margin-top:8px"></div>
+
+  <h3 style="margin-top:18px">Batch archive test</h3>
+  <textarea id="archiveWords" placeholder="Paste an archive list here — one five-letter answer per line, or separated by spaces/commas."></textarea>
+  <div class="row" style="margin-top:8px">
+    <button id="batchTest">Run full archive test</button>
+    <button id="batchCsv" class="secondary" disabled>Download results CSV</button>
+  </div>
+  <div id="batchSummary" style="margin-top:10px"></div>
+  <div id="batchDetails" class="cands" style="max-height:320px;display:none"></div>
+
+  <hr>
+  <h3>Custom answer list</h3>
+  <textarea id="customWords" placeholder="Paste five-letter answers here, separated by spaces, commas, or new lines. For Canuckle archive testing, paste the archive answers here."></textarea>
+  <div class="row" style="margin-top:8px">
+    <button id="useCustom" class="secondary">Use pasted list</button>
+    <button id="clearCustom" class="secondary">Clear custom list</button>
+  </div>
+  <div class="small" id="dictStatus">Loading word lists…</div>
+</section>
+
+<section class="card">
+  <h2>Bot analysis</h2>
+  <div class="kpis">
+    <div class="kpi"><span class="small">Candidates</span><b id="candCount">—</b></div>
+    <div class="kpi"><span class="small">Letters ruled out</span><b id="deadCount">—</b></div>
+    <div class="kpi"><span class="small">Known greens</span><b id="greenCount">—</b></div>
+    <div class="kpi"><span class="small">Avg. pool after best probe</span><b id="avgRemain">—</b></div>
+  </div>
+
+  <h3>Recommendations</h3>
+  <div id="recs"><div class="small">Enter feedback, then analyze.</div></div>
+
+  <h3>Remaining answers</h3>
+  <div id="cands" class="cands">—</div>
+
+  <h3>Why the bot chose them</h3>
+  <div class="note">
+    <b>Best solve</b> favours a word that can actually be the answer.
+    <b>Best information</b> favours the guess that splits the remaining pool most evenly.
+    <b>Hybrid</b> balances both. When the candidate pool is tiny, the same word may legitimately be best in more than one category.
+  </div>
+</section>
+</main>
+
+<div class="footer">
+This is a testing build. Batch archive mode automatically plays the bot against pasted historical answers; it does not control the live Wordle/Canuckle websites. Wordle answer/guess lists are loaded from public GitHub mirrors when available. Canuckle works best with an archive list pasted into Custom answer list.
+</div>
+
+<script>
+const WORDLE_ANS_URL='https://raw.githubusercontent.com/dbraginskiy/wordle/master/wordle-answers.txt';
+const GUESS_URL='https://raw.githubusercontent.com/tabatkins/wordle-list/main/words';
+
+const FALLBACK = (`slate crane crony humid fudge peeve pixie smash swash image arise raise stare irate later alert alter`).split(/\s+/);
+
+let answerWords=[...FALLBACK], guessWords=[...FALLBACK], customList=null;
+let rows=[];
+
+function cleanWords(text){
+  return [...new Set(text.toLowerCase().match(/[a-z]{5}/g)||[])].filter(w=>w.length===5);
+}
+async function loadLists(){
+  let okA=false, okG=false;
+  try{
+    const t=await fetch(WORDLE_ANS_URL).then(r=>r.text());
+    const a=cleanWords(t); if(a.length>2000){answerWords=a;okA=true;}
+  }catch(e){}
+  try{
+    const t=await fetch(GUESS_URL).then(r=>r.text());
+    const g=cleanWords(t); if(g.length>5000){guessWords=g;okG=true;}
+  }catch(e){}
+  if(!okG) guessWords=[...new Set([...guessWords,...answerWords])];
+  document.getElementById('dictStatus').textContent =
+    `Wordle answers: ${answerWords.length.toLocaleString()} • guess pool: ${guessWords.length.toLocaleString()}`+
+    (!okA?' • offline fallback active':'');
+}
+function buildGrid(){
+  const grid=document.getElementById('guessGrid');
+  const old = rows.map(r => ({
+    letters:r.inputs.map(x=>x.value),
+    states:r.states.map(x=>x.dataset.state)
+  }));
+  grid.innerHTML=''; rows=[];
+  const n=6;
+  for(let r=0;r<n;r++){
+    const rowEl=document.createElement('div'); rowEl.className='guessrow';
+    const inputs=[], states=[];
+    for(let i=0;i<5;i++){
+      const wrap=document.createElement('div'); wrap.className='tilewrap';
+      const inp=document.createElement('input'); inp.className='tile'; inp.maxLength=1;
+      inp.dataset.state=(old[r] && old[r].states[i]) || '0'; inp.title='gray';
+      inp.value=(old[r] && old[r].letters[i]) || '';
+      inp.addEventListener('input',()=>{
+        inp.value=inp.value.toUpperCase().replace(/[^A-Z]/g,'');
+        if(inp.value && i<4) inputs[i+1].focus();
+      });
+
+      inp.addEventListener('keydown',(e)=>{
+        if(e.key==='Backspace' || e.key==='Delete'){
+          // Treat Backspace/Delete as row-wise erase while entering a guess.
+          e.preventDefault();
+
+          // If this square has a letter, erase it first.
+          if(inp.value){
+            inp.value='';
+            return;
+          }
+
+          // If this square is already empty, move left and erase the previous letter.
+          for(let j=i-1;j>=0;j--){
+            if(inputs[j].value){
+              inputs[j].value='';
+              inputs[j].focus();
+              return;
+            }
+          }
+        }
+
+        // Optional convenience: left/right arrows move between letter squares.
+        if(e.key==='ArrowLeft' && i>0){
+          e.preventDefault();
+          inputs[i-1].focus();
+        } else if(e.key==='ArrowRight' && i<4){
+          e.preventDefault();
+          inputs[i+1].focus();
+        }
+      });
+
+      inp.addEventListener('contextmenu',(e)=>{e.preventDefault(); cycleTile(inp);});
+      wrap.appendChild(inp);
+      const b=document.createElement('button'); b.className='statehit'; b.type='button';
+      b.title='Change tile colour'; b.setAttribute('aria-label','Change tile colour');
+      b.addEventListener('click',(e)=>{e.preventDefault(); cycleTile(inp);});
+      b.style.inset='auto 2px 2px auto'; b.style.width='18px'; b.style.height='18px';
+      b.style.borderRadius='50%'; b.style.background='rgba(0,0,0,.12)';
+      wrap.appendChild(b);
+      rowEl.appendChild(wrap); inputs.push(inp); states.push(inp);
+      paintState(inp);
+    }
+    grid.appendChild(rowEl); rows.push({inputs,states});
+  }
+}
+function cycleTile(inp){
+  inp.dataset.state=(+inp.dataset.state+1)%3;
+  paintState(inp);
+}
+function paintState(inp){
+  inp.classList.remove('gray','yellow','green','canucklegreen');
+  const s=+inp.dataset.state, game=document.getElementById('game').value;
+  if(s===0){inp.classList.add('gray');inp.title='gray / absent';}
+  else if(s===1){inp.classList.add('yellow');inp.title='yellow / present, wrong spot';}
+  else {inp.classList.add(game==='canuckle'?'canucklegreen':'green');inp.title='correct spot';}
+}
+document.getElementById('game').onchange=()=>{rows.forEach(r=>r.states.forEach(paintState));};
+
+function feedback(guess, answer){
+  // 0 gray, 1 yellow, 2 green. Correct duplicate handling.
+  guess=guess.toLowerCase(); answer=answer.toLowerCase();
+  const out=[0,0,0,0,0], rem=answer.split('');
+  for(let i=0;i<5;i++) if(guess[i]===answer[i]){out[i]=2;rem[i]=null;}
+  for(let i=0;i<5;i++) if(out[i]===0){
+    const j=rem.indexOf(guess[i]); if(j>=0){out[i]=1;rem[j]=null;}
+  }
+  return out.join('');
+}
+function boardRows(){
+  const out=[];
+  for(const r of rows){
+    const g=r.inputs.map(x=>x.value).join('').toLowerCase();
+    if(g.length!==5) continue;
+    const p=r.states.map(b=>b.dataset.state).join('');
+    out.push([g,p]);
+  }
+  return out;
+}
+function filterAnswers(list, br){
+  return list.filter(ans=>br.every(([g,p])=>feedback(g,ans)===p));
+}
+function entropyFor(guess, candidates){
+  const map=new Map();
+  for(const a of candidates){const p=feedback(guess,a);map.set(p,(map.get(p)||0)+1);}
+  const n=candidates.length;
+  let H=0, expected=0, worst=0;
+  for(const c of map.values()){const q=c/n;H-=q*Math.log2(q); expected+=c*c/n; worst=Math.max(worst,c);}
+  return {H, expected, worst, splits:map.size};
+}
+function knownInfo(br){
+  const dead=new Set(), greens=new Set();
+  for(const [g,p] of br){
+    for(let i=0;i<5;i++){if(p[i]==='0')dead.add(g[i]); if(p[i]==='2')greens.add(i);}
+  }
+  return {dead,greens};
+}
+function candidateLetterStats(candidates){
+  const freq={}; for(const a of candidates){for(const ch of new Set(a))freq[ch]=(freq[ch]||0)+1;}
+  return freq;
+}
+function repeatEBonus(guess, br, candidates){ return 0; }
+function scoreRecommendations(candidates, br){
+  const hard=document.getElementById('hardMode').checked;
+  let pool=guessWords;
+  if(customList && document.getElementById('game').value==='canuckle'){
+    // guesses can still come from generic list, but add archive words
+    pool=[...new Set([...guessWords,...customList])];
+  }
+  if(hard) pool=pool.filter(g=>br.every(([old,p])=>feedback(old,g)===p));
+  // For speed, score all candidates plus up to 3000 useful probe words.
+  const lf=candidateLetterStats(candidates);
+  const probes=pool.map(w=>{
+    let s=0; for(const ch of new Set(w)) s+=(lf[ch]||0);
+    return [w,s];
+  }).sort((a,b)=>b[1]-a[1]).slice(0,Math.min(3000,pool.length)).map(x=>x[0]);
+  const scorePool=[...new Set([...candidates,...probes])];
+
+  const candSet=new Set(candidates);
+  let bestInfo=null,bestSolve=null,bestHybrid=null;
+  const n=Math.max(1,candidates.length);
+  for(const g of scorePool){
+    const e=entropyFor(g,candidates);
+    const solve=candSet.has(g)?1/n:0;
+    const eBonus=repeatEBonus(g,br,candidates);
+    const infoScore=e.H+eBonus;
+    const hybrid=infoScore + (candSet.has(g)?0.36:0) - (e.worst/n)*0.08;
+    const obj={word:g,...e,solve,infoScore,hybrid,isCandidate:candSet.has(g),eBonus};
+    if(!bestInfo||obj.infoScore>bestInfo.infoScore)bestInfo=obj;
+    if(obj.isCandidate && (!bestSolve || (obj.H+eBonus)> (bestSolve.H+bestSolve.eBonus)))bestSolve=obj;
+    if(!bestHybrid||obj.hybrid>bestHybrid.hybrid)bestHybrid=obj;
+  }
+  return {bestInfo,bestSolve,bestHybrid};
+}
+function renderRec(label,o){
+  if(!o)return '';
+  return `<div class="reco"><div class="small">${label}</div><strong>${o.word.toUpperCase()}</strong>
+    <div class="meta">entropy ${o.H.toFixed(2)} bits • expected pool ${o.expected.toFixed(1)} • worst case ${o.worst} • ${o.splits} feedback patterns${o.eBonus?` • repeat-E bonus +${o.eBonus.toFixed(2)}`:''}</div></div>`;
+}
+function analyze(){
+  const br=boardRows();
+  const base=(customList?customList:answerWords);
+  const candidates=filterAnswers(base,br);
+  const info=knownInfo(br);
+  document.getElementById('candCount').textContent=candidates.length;
+  document.getElementById('deadCount').textContent=info.dead.size;
+  document.getElementById('greenCount').textContent=info.greens.size;
+  document.getElementById('cands').textContent=candidates.length?candidates.map(w=>w.toUpperCase()).join('  '):'No candidates in the active answer list.';
+  if(!candidates.length){document.getElementById('recs').innerHTML='<div class="small">No candidates. Check the feedback or load a broader/custom answer list.</div>';document.getElementById('avgRemain').textContent='—';return null;}
+  const r=scoreRecommendations(candidates,br);
+  document.getElementById('recs').innerHTML=
+    renderRec('Best solve',r.bestSolve)+renderRec('Best information',r.bestInfo)+renderRec('Hybrid',r.bestHybrid);
+  document.getElementById('avgRemain').textContent=r.bestInfo.expected.toFixed(1);
+  return {candidates,recs:r};
+}
+document.getElementById('analyze').onclick=analyze;
+document.getElementById('reset').onclick=()=>{rows=[];buildGrid();document.getElementById('secret').value='';document.getElementById('simlog').textContent='';document.getElementById('recs').innerHTML='<div class="small">Enter feedback, then analyze.</div>';document.getElementById('cands').textContent='—';['candCount','deadCount','greenCount','avgRemain'].forEach(id=>document.getElementById(id).textContent='—');};
+document.getElementById('todayExample').onclick=()=>{
+  rows=[];buildGrid();
+  const ex=[['SLATE','00002'],['CRONY','00000'],['FUDGE','00002']];
+  ex.forEach((x,r)=>{[...x[0]].forEach((ch,i)=>rows[r].inputs[i].value=ch);[...x[1]].forEach((s,i)=>{rows[r].states[i].dataset.state=s;paintState(rows[r].states[i]);});});
+  analyze();
+};
+document.getElementById('useCustom').onclick=()=>{
+  const w=cleanWords(document.getElementById('customWords').value);
+  if(!w.length){alert('No five-letter words found.');return;}
+  customList=w;document.getElementById('dictStatus').textContent=`Custom answer list active: ${w.length.toLocaleString()} words`;analyze();
+};
+document.getElementById('clearCustom').onclick=()=>{customList=null;document.getElementById('customWords').value='';document.getElementById('dictStatus').textContent=`Wordle answers: ${answerWords.length.toLocaleString()} • guess pool: ${guessWords.length.toLocaleString()}`;analyze();};
+
+async function simulate(){
+  const secret=document.getElementById('secret').value.toLowerCase().replace(/[^a-z]/g,'');
+  if(secret.length!==5){alert('Enter a five-letter secret answer.');return;}
+  // fresh 6-row internal simulation, default opener SLATE
+  let br=[], log=[], guess='slate', active=(customList?customList:answerWords);
+  for(let turn=1;turn<=6;turn++){
+    const pat=feedback(guess,secret); log.push(`${turn}. ${guess.toUpperCase()}  ${pat.replaceAll('2','🟩').replaceAll('1','🟨').replaceAll('0','⬛')}`);
+    br.push([guess,pat]); if(pat==='22222')break;
+    const c=filterAnswers(active,br);
+    if(!c.length){log.push('No candidate in active answer list.');break;}
+    const r=scoreRecommendations(c,br);
+    guess=(turn<5?r.bestHybrid.word:(r.bestSolve||r.bestHybrid).word);
+  }
+  document.getElementById('simlog').innerHTML='<pre style="white-space:pre-wrap;margin:0">'+log.join('\n')+'</pre>';
+}
+document.getElementById('simulate').onclick=simulate;
+
+
+let lastBatchResults=[];
+
+function simulateSecret(secret, opener='slate'){
+  secret=secret.toLowerCase();
+  let br=[], turns=[], guess=opener;
+  const active=(customList?customList:answerWords);
+
+  for(let turn=1;turn<=6;turn++){
+    const pat=feedback(guess,secret);
+    turns.push({turn,guess,pattern:pat});
+    br.push([guess,pat]);
+
+    if(pat==='22222'){
+      return {answer:secret,solved:true,guesses:turn,turns};
+    }
+
+    const c=filterAnswers(active,br);
+    if(!c.length){
+      return {answer:secret,solved:false,guesses:null,reason:'No candidate in active list',turns};
+    }
+
+    const r=scoreRecommendations(c,br);
+    if(turn < 4){
+      guess=(r.bestHybrid||r.bestSolve||r.bestInfo).word;
+    }else{
+      guess=(r.bestSolve||r.bestHybrid||r.bestInfo).word;
+    }
+  }
+
+  return {answer:secret,solved:false,guesses:null,reason:'Not solved in 6',turns};
+}
+
+async function runBatch(){
+  const btn=document.getElementById('batchTest');
+  const words=cleanWords(document.getElementById('archiveWords').value);
+  if(!words.length){alert('Paste at least one five-letter archive answer first.');return;}
+
+  btn.disabled=true;
+  btn.textContent='Testing…';
+  document.getElementById('batchSummary').innerHTML='<div class="small">Running archive test…</div>';
+  document.getElementById('batchDetails').style.display='none';
+  await new Promise(r=>setTimeout(r,25));
+
+  const results=[];
+  for(let i=0;i<words.length;i++){
+    results.push(simulateSecret(words[i]));
+    if(i%10===0){
+      document.getElementById('batchSummary').innerHTML=
+        `<div class="small">Testing ${i+1} of ${words.length}…</div>`;
+      await new Promise(r=>setTimeout(r,0));
+    }
+  }
+  lastBatchResults=results;
+
+  const solved=results.filter(x=>x.solved);
+  const failures=results.filter(x=>!x.solved);
+  const dist={1:0,2:0,3:0,4:0,5:0,6:0};
+  solved.forEach(x=>dist[x.guesses]++);
+  const avg=solved.length ? solved.reduce((s,x)=>s+x.guesses,0)/solved.length : 0;
+  const within3=solved.filter(x=>x.guesses<=3).length;
+  const within4=solved.filter(x=>x.guesses<=4).length;
+
+  document.getElementById('batchSummary').innerHTML = `
+    <div class="kpis">
+      <div class="kpi"><span class="small">Tested</span><b>${results.length}</b></div>
+      <div class="kpi"><span class="small">Win rate</span><b>${(100*solved.length/results.length).toFixed(1)}%</b></div>
+      <div class="kpi"><span class="small">Avg guesses</span><b>${avg.toFixed(2)}</b></div>
+      <div class="kpi"><span class="small">Failures</span><b>${failures.length}</b></div>
+    </div>
+    <table class="testtable">
+      <tr><th>Metric</th><th>Count</th><th>Rate</th></tr>
+      <tr><td>Solved in 2</td><td>${dist[2]}</td><td>${(100*dist[2]/results.length).toFixed(1)}%</td></tr>
+      <tr><td>Solved in 3</td><td>${dist[3]}</td><td>${(100*dist[3]/results.length).toFixed(1)}%</td></tr>
+      <tr><td>Solved in 4</td><td>${dist[4]}</td><td>${(100*dist[4]/results.length).toFixed(1)}%</td></tr>
+      <tr><td>Solved in 5</td><td>${dist[5]}</td><td>${(100*dist[5]/results.length).toFixed(1)}%</td></tr>
+      <tr><td>Solved in 6</td><td>${dist[6]}</td><td>${(100*dist[6]/results.length).toFixed(1)}%</td></tr>
+      <tr class="good"><td>3 or fewer</td><td>${within3}</td><td>${(100*within3/results.length).toFixed(1)}%</td></tr>
+      <tr class="good"><td>4 or fewer</td><td>${within4}</td><td>${(100*within4/results.length).toFixed(1)}%</td></tr>
+    </table>`;
+
+  const details=results.map(r=>{
+    const path=r.turns.map(t=>t.guess.toUpperCase()).join(' → ');
+    return `${r.answer.toUpperCase().padEnd(6)}  ${r.solved ? r.guesses+' guesses' : 'FAIL'}  ${path}${r.reason?'  ['+r.reason+']':''}`;
+  }).join('\n');
+
+  const d=document.getElementById('batchDetails');
+  d.textContent=details;
+  d.style.display='block';
+  document.getElementById('batchCsv').disabled=false;
+  btn.disabled=false;
+  btn.textContent='Run full archive test';
+}
+
+function downloadBatchCsv(){
+  if(!lastBatchResults.length)return;
+  const rows=[['answer','solved','guesses','path','reason']];
+  for(const r of lastBatchResults){
+    rows.push([
+      r.answer.toUpperCase(),
+      r.solved?'yes':'no',
+      r.guesses??'',
+      r.turns.map(t=>t.guess.toUpperCase()).join(' > '),
+      r.reason||''
+    ]);
+  }
+  const csv=rows.map(row=>row.map(v=>`"${String(v).replaceAll('"','""')}"`).join(',')).join('\n');
+  const blob=new Blob([csv],{type:'text/csv'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;a.download='word-strategy-bot-archive-results.csv';
+  document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),500);
+}
+
+document.getElementById('batchTest').onclick=runBatch;
+document.getElementById('batchCsv').onclick=downloadBatchCsv;
+
+buildGrid();
+loadLists();
+</script>
+</body>
+</html>
