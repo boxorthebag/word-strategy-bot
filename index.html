@@ -68,7 +68,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 <header>
   <h1>Word Strategy Bot</h1>
   <span class="badge">Wordle + Canuckle testing</span>
-  <span class="badge">entropy + solve probability + automatic game logging v13</span>
+  <span class="badge">entropy + solve probability + automatic game logging v14</span>
 </header>
 
 <main>
@@ -773,7 +773,11 @@ document.getElementById('wcReject').onclick=wcRejectCurrent;
 document.getElementById('wcUndo').onclick=wcUndo;
 document.getElementById('wcReset').onclick=()=>wcResetState(false);
 document.getElementById('wcFeedback').addEventListener('keydown',(e)=>{ if(e.key==='Enter'){e.preventDefault();wcSubmitFeedback();} });
-document.getElementById('wcFeedback').addEventListener('input',(e)=>{ e.target.value=e.target.value.replace(/[^012]/g,'').slice(0,5); });
+document.getElementById('wcFeedback').addEventListener('input',(e)=>{
+  let v=e.target.value.replace(/[^0123]/g,'').slice(0,5);
+  if(v.includes('3')) v='3';
+  e.target.value=v;
+});
 document.getElementById('logCsv').onclick=exportLogsCsv;
 document.getElementById('logJson').onclick=exportLogsJson;
 document.getElementById('logClear').onclick=clearLogs;
