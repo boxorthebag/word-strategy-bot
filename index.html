@@ -34,7 +34,6 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .guessrow{display:grid;grid-template-columns:repeat(5,58px);gap:8px;align-items:center}
 .tilewrap{position:relative;width:58px;height:58px}
 .tile{width:58px;height:58px;border:2px solid #cfcfcf;border-radius:7px;text-transform:uppercase;text-align:center;font-size:28px;font-weight:800;padding:0;background:#fff;color:#111}
-.tile.empty{background:#fff!important;color:#111!important;border-color:#cfcfcf!important}
 .tile.gray{background:var(--gray);border-color:var(--gray);color:#fff}
 .tile.yellow{background:var(--yellow);border-color:var(--yellow);color:#fff}
 .tile.green{background:var(--green);border-color:var(--green);color:#fff}
@@ -69,7 +68,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 <header>
   <h1>Word Strategy Bot</h1>
   <span class="badge">Wordle + Canuckle testing</span>
-  <span class="badge">entropy + solve probability + controller diagnostics v18</span>
+  <span class="badge">entropy + solve probability + stable override + board sync v19</span>
 </header>
 
 <main>
@@ -126,20 +125,19 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
         <input id="wcPlayedWord" type="text" maxlength="5"
                placeholder="actual word (optional)"
                style="width:210px;text-transform:uppercase">
-        <button id="wcSubmit" onclick="safeSubmitResult()">Submit result</button>
-        <button id="wcReject" class="secondary" onclick="safeRejectWord()">Rejected by game</button>
+        <button id="wcSubmit">Submit result</button>
+        <button id="wcReject" class="secondary">Rejected by game</button>
       </div>
-      <div class="small" style="margin-top:6px">Example: 00002 = first four gray, last letter green. Enter 3 by itself to mark the word solved. If you play a different word, type it in “actual word” OR enter it in the next empty row of the visual board before submitting.</div>
+      <div class="small" style="margin-top:6px">Example: 00002 = first four gray, last letter green. Enter 3 by itself to mark the word solved. If you play a different valid word, type it in “actual word” before submitting.</div>
     </div>
 
     <div class="row" style="margin-top:10px">
-      <button id="wcStart" onclick="safeStartGame()">Start New Game</button>
-      <button id="wcUndo" class="secondary" disabled onclick="safeUndo()">Undo Last Result</button>
+      <button id="wcStart">Start New Game</button>
+      <button id="wcUndo" class="secondary" disabled>Undo Last Result</button>
       <button id="wcReset" class="secondary">Reset Controller</button>
     </div>
 
     <div id="wcHistory" class="cands" style="margin-top:10px;display:none"></div>
-    <div id="wcReadyLine" class="small" style="margin-top:8px"><b>Controller:</b> initializing…</div>
   </div>
 
   <hr>
@@ -276,14 +274,10 @@ function buildGrid(){
     for(let i=0;i<5;i++){
       const wrap=document.createElement('div'); wrap.className='tilewrap';
       const inp=document.createElement('input'); inp.className='tile'; inp.maxLength=1;
-      inp.dataset.state=(old[r] && old[r].states[i]) || '0';
-      inp.title='';
+      inp.dataset.state=(old[r] && old[r].states[i]) || '0'; inp.title='gray';
       inp.value=(old[r] && old[r].letters[i]) || '';
-      if(!inp.value) inp.classList.add('empty');
       inp.addEventListener('input',()=>{
         inp.value=inp.value.toUpperCase().replace(/[^A-Z]/g,'');
-        if(inp.value) inp.classList.remove('empty');
-        else inp.classList.add('empty');
         if(inp.value && i<4) inputs[i+1].focus();
       });
 
@@ -327,7 +321,7 @@ function buildGrid(){
       b.style.borderRadius='50%'; b.style.background='rgba(0,0,0,.12)';
       wrap.appendChild(b);
       rowEl.appendChild(wrap); inputs.push(inp); states.push(inp);
-      if(inp.value) paintState(inp);
+      paintState(inp);
     }
     grid.appendChild(rowEl); rows.push({inputs,states});
   }
@@ -443,7 +437,7 @@ function analyze(){
   return {candidates,recs:r};
 }
 document.getElementById('analyze').onclick=analyze;
-document.getElementById('reset').onclick=()=>{rows=[];buildGrid();clearVisualBoard();document.getElementById('secret').value='';document.getElementById('simlog').textContent='';document.getElementById('recs').innerHTML='<div class="small">Enter feedback, then analyze.</div>';document.getElementById('cands').textContent='—';['candCount','deadCount','greenCount','avgRemain'].forEach(id=>document.getElementById(id).textContent='—');};
+document.getElementById('reset').onclick=()=>{rows=[];buildGrid();document.getElementById('secret').value='';document.getElementById('simlog').textContent='';document.getElementById('recs').innerHTML='<div class="small">Enter feedback, then analyze.</div>';document.getElementById('cands').textContent='—';['candCount','deadCount','greenCount','avgRemain'].forEach(id=>document.getElementById(id).textContent='—');};
 document.getElementById('todayExample').onclick=()=>{
   rows=[];buildGrid();
   const ex=[['SLATE','00002'],['CRONY','00000'],['FUDGE','00002']];
@@ -528,8 +522,8 @@ function wcStartGame(){
     currentDecision:{source:'Opening word',candidateCount:(customList?customList.length:answerWords.length),entropy:null,expected:null,worst:null,alternatives:{}}
   };
   wcSave();
+  restoreControllerHistoryToBoard();
   if(document.getElementById('wcPlayedWord')) document.getElementById('wcPlayedWord').value='';
-  clearVisualBoard();
   wcRender();
   setTimeout(()=>document.getElementById('wcFeedback')?.focus(),50);
 }
@@ -603,7 +597,8 @@ function finalizeGame(){
     turns:wcState.history.map((x,i)=>({
       turn:i+1, guess:x.guess.toUpperCase(), feedback:x.pattern,
       candidatesBefore:x.candidatesBefore, candidatesAfter:x.candidatesAfter,
-      source:x.source, suggestedWord:(x.suggestedWord||x.guess).toUpperCase(),
+      source:x.source,
+      suggestedWord:(x.suggestedWord||x.guess).toUpperCase(),
       manualOverride:!!x.manualOverride,
       entropy:x.entropy, expected:x.expected, worst:x.worst,
       alternatives:x.alternatives||{}
@@ -615,91 +610,33 @@ function finalizeGame(){
 }
 
 
-function ensureVisualBoard(){
-  if(!rows || rows.length!==6){
-    buildGrid();
+function paintControllerTurnOnBoard(rowIndex, word, pattern){
+  if(!rows || rowIndex<0 || rowIndex>=rows.length) return;
+  const r=rows[rowIndex];
+  const w=String(word||'').toUpperCase();
+  const p=String(pattern||'00000');
+  for(let i=0;i<5;i++){
+    r.inputs[i].value=w[i]||'';
+    r.states[i].dataset.state=p[i]||'0';
+    paintState(r.states[i]);
   }
 }
 
-function clearVisualBoard(){
-  ensureVisualBoard();
+function restoreControllerHistoryToBoard(){
+  if(!rows || !rows.length) return;
+  // Clear board first.
   for(const r of rows){
     for(let i=0;i<5;i++){
-      const inp=r.inputs[i];
-      inp.value='';
-      inp.dataset.state='0';
-      inp.classList.remove('gray','yellow','green','canucklegreen');
-      inp.classList.add('empty');
-      inp.removeAttribute('style');
-      inp.title='';
+      r.inputs[i].value='';
+      r.states[i].dataset.state='0';
+      r.states[i].classList.remove('gray','yellow','green','canucklegreen');
+      r.states[i].style.background='';
+      r.states[i].style.color='';
+      r.states[i].style.borderColor='';
+      r.states[i].title='';
     }
   }
-}
-
-function setVisualTileState(inp,state){
-  inp.classList.remove('empty');
-  inp.dataset.state=String(state);
-  inp.removeAttribute('style');
-  paintState(inp);
-}
-
-function syncVisualBoard(){
-  ensureVisualBoard();
-
-  // Preserve a manually typed override in the current row while repainting history.
-  const currentIndex=wcState.history.length;
-  let pending='';
-  if(currentIndex>=0 && currentIndex<rows.length){
-    pending=rows[currentIndex].inputs.map(x=>x.value||'').join('');
-  }
-
-  clearVisualBoard();
-
-  wcState.history.slice(0,6).forEach((h,rowIndex)=>{
-    const word=(h.guess||'').toUpperCase();
-    const pattern=h.pattern||'00000';
-    for(let i=0;i<5;i++){
-      rows[rowIndex].inputs[i].value=word[i]||'';
-      setVisualTileState(rows[rowIndex].states[i], pattern[i]||'0');
-    }
-  });
-
-  // Put back any current-row manual word that has not yet been submitted.
-  if(pending && currentIndex<rows.length){
-    for(let i=0;i<5;i++){
-      rows[currentIndex].inputs[i].value=pending[i]||'';
-      if(pending[i]) rows[currentIndex].inputs[i].classList.remove('empty');
-    }
-  }
-}
-
-function getVisualOverrideWord(){
-  const rowIndex=wcState.history.length;
-  if(rowIndex<0 || rowIndex>=rows.length) return '';
-  const letters=rows[rowIndex].inputs.map(x=>x.value.trim().toLowerCase());
-  const any=letters.some(Boolean);
-  if(!any) return '';
-  const word=letters.join('');
-  if(word.length!==5 || !/^[a-z]{5}$/.test(word)) return '__PARTIAL__';
-  return word;
-}
-
-function getActualPlayedWord(){
-  const explicit=(document.getElementById('wcPlayedWord')?.value||'').trim().toLowerCase();
-  if(explicit){
-    if(!/^[a-z]{5}$/.test(explicit)) return {error:'The actual word must be exactly five letters.'};
-    return {word:explicit,overridden:explicit!==wcState.currentGuess.toLowerCase(),via:'override box'};
-  }
-
-  const visual=getVisualOverrideWord();
-  if(visual==='__PARTIAL__'){
-    return {error:'The next visual-board row contains only part of a word. Complete it or clear it before submitting.'};
-  }
-  if(visual){
-    return {word:visual,overridden:visual!==wcState.currentGuess.toLowerCase(),via:'visual board'};
-  }
-
-  return {word:wcState.currentGuess.toLowerCase(),overridden:false,via:'suggestion'};
+  wcState.history.slice(0,6).forEach((h,idx)=>paintControllerTurnOnBoard(idx,h.guess,h.pattern));
 }
 
 function wcSubmitFeedback(){
@@ -709,43 +646,48 @@ function wcSubmitFeedback(){
   if(p==='3') p='22222';
   if(!/^[012]{5}$/.test(p)){ alert('Enter five digits using only 0, 1, and 2 — or enter 3 by itself for a win.'); el.focus(); return; }
 
-  const actual=getActualPlayedWord();
-  if(actual.error){ alert(actual.error); return; }
+  const typedActual=(document.getElementById('wcPlayedWord')?.value||'').trim().toLowerCase();
+  if(typedActual && !/^[a-z]{5}$/.test(typedActual)){
+    alert('Actual word must be exactly five letters, or leave that box blank.');
+    return;
+  }
 
-  const guess=actual.word;
   const suggested=wcState.currentGuess.toLowerCase();
+  const guess=typedActual || suggested;
+  const overridden=guess!==suggested;
+
   const d=wcState.currentDecision||{};
   const beforeCandidates=d.candidateCount ?? (customList?customList.length:answerWords.length);
   const tempHistory=[...wcState.history,{guess,pattern:p}];
   const afterCandidates=wcCandidatesFromHistory(tempHistory).length;
 
-  const source = actual.overridden
-    ? `Manual override via ${actual.via}; bot suggested ${suggested.toUpperCase()}`
-    : (d.source||'');
-
   wcState.history.push({
-    guess,pattern:p,source,
+    guess,pattern:p,
+    source:overridden ? `Manual override; bot suggested ${suggested.toUpperCase()}` : (d.source||''),
     suggestedWord:suggested,
-    manualOverride:actual.overridden,
+    manualOverride:overridden,
     candidatesBefore:beforeCandidates,candidatesAfter:afterCandidates,
     entropy:safeNum(d.entropy),expected:safeNum(d.expected),worst:safeNum(d.worst),
     alternatives:d.alternatives||{}
   });
 
+  paintControllerTurnOnBoard(wcState.history.length-1, guess, p);
+  if(document.getElementById('wcPlayedWord')) document.getElementById('wcPlayedWord').value='';
+
   if(p==='22222'){
-    wcState.solved=true; wcState.active=false; wcSave(); el.value=''; if(document.getElementById('wcPlayedWord')) document.getElementById('wcPlayedWord').value=''; finalizeGame(); syncVisualBoard(); wcRender(); return;
+    wcState.solved=true; wcState.active=false; wcSave(); el.value=''; finalizeGame(); wcRender(); return;
   }
 
   const next=wcChooseNext();
   if(next.error){
     wcState.active=false;
     wcState.currentDecision={source:next.error,candidateCount:next.count??afterCandidates,entropy:null,expected:null,worst:null,alternatives:{}};
-    wcSave(); el.value=''; if(document.getElementById('wcPlayedWord')) document.getElementById('wcPlayedWord').value=''; syncVisualBoard(); wcRender(); return;
+    wcSave(); el.value=''; wcRender(); return;
   }
 
   wcState.currentGuess=next.word;
   wcState.currentDecision={source:next.source,candidateCount:next.count,entropy:next.entropy,expected:next.expected,worst:next.worst,alternatives:next.alternatives||{}};
-  wcSave(); el.value=''; if(document.getElementById('wcPlayedWord')) document.getElementById('wcPlayedWord').value=''; syncVisualBoard(); wcRender();
+  wcSave(); el.value=''; wcRender();
   setTimeout(()=>el.focus(),30);
 }
 
@@ -757,12 +699,11 @@ function wcUndo(){
   }
   wcState.currentGuess=last.guess;
   wcState.currentDecision={source:last.source||'Previous guess',candidateCount:last.candidatesBefore??null,entropy:last.entropy??null,expected:last.expected??null,worst:last.worst??null,alternatives:last.alternatives||{}};
-  wcState.solved=false; wcState.active=true; if(document.getElementById('wcPlayedWord')) document.getElementById('wcPlayedWord').value=''; wcSave(); wcRender();
+  wcState.solved=false; wcState.active=true; wcSave(); restoreControllerHistoryToBoard(); wcRender();
   setTimeout(()=>document.getElementById('wcFeedback')?.focus(),30);
 }
 
 function wcRender(){
-  syncVisualBoard();
   const game=document.getElementById('wcGame');
   if(!game) return;
   const turn=wcState.history.length+1;
@@ -895,54 +836,10 @@ function wcRejectCurrent(){
   wcSave(); wcRender();
 }
 
-
-function wcShowReady(msg, isError=false){
-  const el=document.getElementById('wcReadyLine');
-  if(!el) return;
-  el.innerHTML=`<b>Controller:</b> ${msg}`;
-  el.style.color=isError ? '#9e2727' : '';
-}
-function safeStartGame(){
-  try{
-    wcStartGame();
-    wcShowReady('ready');
-  }catch(err){
-    wcShowReady('ERROR — '+(err?.message||String(err)), true);
-    console.error(err);
-  }
-}
-function safeSubmitResult(){
-  try{
-    wcSubmitFeedback();
-    wcShowReady('ready');
-  }catch(err){
-    wcShowReady('ERROR — '+(err?.message||String(err)), true);
-    console.error(err);
-  }
-}
-function safeRejectWord(){
-  try{
-    wcRejectCurrent();
-    wcShowReady('ready');
-  }catch(err){
-    wcShowReady('ERROR — '+(err?.message||String(err)), true);
-    console.error(err);
-  }
-}
-function safeUndo(){
-  try{
-    wcUndo();
-    wcShowReady('ready');
-  }catch(err){
-    wcShowReady('ERROR — '+(err?.message||String(err)), true);
-    console.error(err);
-  }
-}
-
-
-
-
-
+document.getElementById('wcStart').onclick=wcStartGame;
+document.getElementById('wcSubmit').onclick=wcSubmitFeedback;
+document.getElementById('wcReject').onclick=wcRejectCurrent;
+document.getElementById('wcUndo').onclick=wcUndo;
 document.getElementById('wcReset').onclick=()=>wcResetState(false);
 document.getElementById('wcFeedback').addEventListener('keydown',(e)=>{ if(e.key==='Enter'){e.preventDefault();wcSubmitFeedback();} });
 document.getElementById('wcFeedback').addEventListener('input',(e)=>{
@@ -957,17 +854,12 @@ document.getElementById('logCsv').onclick=exportLogsCsv;
 document.getElementById('logJson').onclick=exportLogsJson;
 document.getElementById('logClear').onclick=clearLogs;
 
-try{
-  wcLoad();
-  buildGrid();
-  clearVisualBoard();
+wcLoad();
+setTimeout(()=>{
+  restoreControllerHistoryToBoard();
   wcRender();
   renderLogs();
-  wcShowReady('ready');
-}catch(err){
-  wcShowReady('ERROR — '+(err?.message||String(err)), true);
-  console.error(err);
-}
+},0);
 
 let lastBatchResults=[];
 
@@ -998,3 +890,96 @@ function simulateSecret(secret, opener='slate'){
     }
   }
 
+  return {answer:secret,solved:false,guesses:null,reason:'Not solved in 6',turns};
+}
+
+async function runBatch(){
+  const btn=document.getElementById('batchTest');
+  const words=cleanWords(document.getElementById('archiveWords').value);
+  if(!words.length){alert('Paste at least one five-letter archive answer first.');return;}
+
+  btn.disabled=true;
+  btn.textContent='Testing…';
+  document.getElementById('batchSummary').innerHTML='<div class="small">Running archive test…</div>';
+  document.getElementById('batchDetails').style.display='none';
+  await new Promise(r=>setTimeout(r,25));
+
+  const results=[];
+  for(let i=0;i<words.length;i++){
+    results.push(simulateSecret(words[i]));
+    if(i%10===0){
+      document.getElementById('batchSummary').innerHTML=
+        `<div class="small">Testing ${i+1} of ${words.length}…</div>`;
+      await new Promise(r=>setTimeout(r,0));
+    }
+  }
+  lastBatchResults=results;
+
+  const solved=results.filter(x=>x.solved);
+  const failures=results.filter(x=>!x.solved);
+  const dist={1:0,2:0,3:0,4:0,5:0,6:0};
+  solved.forEach(x=>dist[x.guesses]++);
+  const avg=solved.length ? solved.reduce((s,x)=>s+x.guesses,0)/solved.length : 0;
+  const within3=solved.filter(x=>x.guesses<=3).length;
+  const within4=solved.filter(x=>x.guesses<=4).length;
+
+  document.getElementById('batchSummary').innerHTML = `
+    <div class="kpis">
+      <div class="kpi"><span class="small">Tested</span><b>${results.length}</b></div>
+      <div class="kpi"><span class="small">Win rate</span><b>${(100*solved.length/results.length).toFixed(1)}%</b></div>
+      <div class="kpi"><span class="small">Avg guesses</span><b>${avg.toFixed(2)}</b></div>
+      <div class="kpi"><span class="small">Failures</span><b>${failures.length}</b></div>
+    </div>
+    <table class="testtable">
+      <tr><th>Metric</th><th>Count</th><th>Rate</th></tr>
+      <tr><td>Solved in 2</td><td>${dist[2]}</td><td>${(100*dist[2]/results.length).toFixed(1)}%</td></tr>
+      <tr><td>Solved in 3</td><td>${dist[3]}</td><td>${(100*dist[3]/results.length).toFixed(1)}%</td></tr>
+      <tr><td>Solved in 4</td><td>${dist[4]}</td><td>${(100*dist[4]/results.length).toFixed(1)}%</td></tr>
+      <tr><td>Solved in 5</td><td>${dist[5]}</td><td>${(100*dist[5]/results.length).toFixed(1)}%</td></tr>
+      <tr><td>Solved in 6</td><td>${dist[6]}</td><td>${(100*dist[6]/results.length).toFixed(1)}%</td></tr>
+      <tr class="good"><td>3 or fewer</td><td>${within3}</td><td>${(100*within3/results.length).toFixed(1)}%</td></tr>
+      <tr class="good"><td>4 or fewer</td><td>${within4}</td><td>${(100*within4/results.length).toFixed(1)}%</td></tr>
+    </table>`;
+
+  const details=results.map(r=>{
+    const path=r.turns.map(t=>t.guess.toUpperCase()).join(' → ');
+    return `${r.answer.toUpperCase().padEnd(6)}  ${r.solved ? r.guesses+' guesses' : 'FAIL'}  ${path}${r.reason?'  ['+r.reason+']':''}`;
+  }).join('\n');
+
+  const d=document.getElementById('batchDetails');
+  d.textContent=details;
+  d.style.display='block';
+  document.getElementById('batchCsv').disabled=false;
+  btn.disabled=false;
+  btn.textContent='Run full archive test';
+}
+
+function downloadBatchCsv(){
+  if(!lastBatchResults.length)return;
+  const rows=[['answer','solved','guesses','path','reason']];
+  for(const r of lastBatchResults){
+    rows.push([
+      r.answer.toUpperCase(),
+      r.solved?'yes':'no',
+      r.guesses??'',
+      r.turns.map(t=>t.guess.toUpperCase()).join(' > '),
+      r.reason||''
+    ]);
+  }
+  const csv=rows.map(row=>row.map(v=>`"${String(v).replaceAll('"','""')}"`).join(',')).join('\n');
+  const blob=new Blob([csv],{type:'text/csv'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;a.download='word-strategy-bot-archive-results.csv';
+  document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),500);
+}
+
+document.getElementById('batchTest').onclick=runBatch;
+document.getElementById('batchCsv').onclick=downloadBatchCsv;
+
+buildGrid();
+loadLists();
+</script>
+</body>
+</html>
