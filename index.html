@@ -68,7 +68,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 <header>
   <h1>Word Strategy Bot</h1>
   <span class="badge">Wordle + Canuckle testing</span>
-  <span class="badge">entropy + solve probability + family-trap probes v21</span>
+  <span class="badge">entropy + solve probability + family-trap probes v22</span>
 </header>
 
 <main>
@@ -906,6 +906,7 @@ document.getElementById('logCsv').onclick=exportLogsCsv;
 document.getElementById('logJson').onclick=exportLogsJson;
 document.getElementById('logClear').onclick=clearLogs;
 
+buildGrid();
 wcLoad();
 setTimeout(()=>{
   restoreControllerHistoryToBoard();
@@ -997,4 +998,3 @@ async function runBatch(){
     const path=r.turns.map(t=>t.guess.toUpperCase()).join(' → ');
     return `${r.answer.toUpperCase().padEnd(6)}  ${r.solved ? r.guesses+' guesses' : 'FAIL'}  ${path}${r.reason?'  ['+r.reason+']':''}`;
   }).join('\n');
-
