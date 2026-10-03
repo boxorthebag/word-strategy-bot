@@ -68,7 +68,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 <header>
   <h1>Word Strategy Bot</h1>
   <span class="badge">Wordle + Canuckle testing</span>
-  <span class="badge">entropy + solve probability + automatic game logging v12</span>
+  <span class="badge">entropy + solve probability + automatic game logging v13</span>
 </header>
 
 <main>
@@ -123,8 +123,9 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
         <input id="wcFeedback" type="text" maxlength="5" inputmode="numeric"
                placeholder="01220" style="width:130px;font-size:22px;letter-spacing:3px;text-align:center">
         <button id="wcSubmit">Submit result</button>
+      <button id="wcReject" class="secondary">Rejected by game</button>
       </div>
-      <div class="small" style="margin-top:6px">Example: 00002 = first four gray, last letter green. Enter 3 by itself to mark the word solved.</div>
+      <div class="small" style="margin-top:6px">Example: 00002 = first four gray, last letter green. Enter 3 by itself to mark the word solved. If the game refuses the suggested word, click Rejected by game.</div>
     </div>
 
     <div class="row" style="margin-top:10px">
@@ -381,7 +382,7 @@ function repeatEBonus(guess, br, candidates){ return 0; }
 function scoreRecommendations(candidates, br){
   const hard=document.getElementById('hardMode').checked;
   const alreadyPlayed=new Set(br.map(x=>x[0]));
-  let pool=guessWords.filter(w=>!alreadyPlayed.has(w));
+  let pool=guessWords.filter(w=>!alreadyPlayed.has(w) && !rejectedWords.has(w));
   if(customList && document.getElementById('game').value==='canuckle'){
     // guesses can still come from generic list, but add archive words
     pool=[...new Set([...guessWords,...customList])];
@@ -393,7 +394,7 @@ function scoreRecommendations(candidates, br){
     let s=0; for(const ch of new Set(w)) s+=(lf[ch]||0);
     return [w,s];
   }).sort((a,b)=>b[1]-a[1]).slice(0,Math.min(3000,pool.length)).map(x=>x[0]);
-  const scorePool=[...new Set([...candidates.filter(w=>!alreadyPlayed.has(w)),...probes])];
+  const scorePool=[...new Set([...candidates.filter(w=>!alreadyPlayed.has(w) && !rejectedWords.has(w)),...probes])];
 
   const candSet=new Set(candidates);
   let bestInfo=null,bestSolve=null,bestHybrid=null;
@@ -478,6 +479,8 @@ let wcState={
   currentDecision:{source:'Opening word',candidateCount:null,entropy:null,expected:null,worst:null,alternatives:{}}
 };
 let gameLogs=[];
+const REJECTED_KEY='wordStrategyBot_rejectedWords_v1';
+let rejectedWords=new Set(['rompy']);
 
 function safeNum(v){ return (typeof v==='number' && Number.isFinite(v)) ? v : null; }
 function wcSave(){ try{localStorage.setItem(WC_KEY,JSON.stringify(wcState));}catch(e){} }
@@ -497,6 +500,10 @@ function wcLoad(){
     const x=JSON.parse(localStorage.getItem(LOG_KEY)||'[]');
     if(Array.isArray(x)) gameLogs=x;
   }catch(e){ gameLogs=[]; }
+  try{
+    const x=JSON.parse(localStorage.getItem(REJECTED_KEY)||'[]');
+    if(Array.isArray(x)) x.forEach(w=>rejectedWords.add(String(w).toLowerCase()));
+  }catch(e){}
 }
 
 function wcResetState(keepGame=false){
@@ -742,8 +749,27 @@ function clearLogs(){
   gameLogs=[]; logsSave(); renderLogs();
 }
 
+
+function wcRejectCurrent(){
+  if(!wcState.active || !wcState.currentGuess) return;
+  const bad=wcState.currentGuess.toLowerCase();
+  rejectedWords.add(bad);
+  try{localStorage.setItem(REJECTED_KEY,JSON.stringify([...rejectedWords]));}catch(e){}
+
+  const next=wcChooseNext();
+  if(next.error){
+    wcState.active=false;
+    wcState.currentDecision={source:'Rejected word: '+bad.toUpperCase()+'; '+next.error,candidateCount:next.count??null,entropy:null,expected:null,worst:null,alternatives:{}};
+  }else{
+    wcState.currentGuess=next.word;
+    wcState.currentDecision={source:'Replacement after rejected '+bad.toUpperCase(),candidateCount:next.count,entropy:next.entropy,expected:next.expected,worst:next.worst,alternatives:next.alternatives||{}};
+  }
+  wcSave(); wcRender();
+}
+
 document.getElementById('wcStart').onclick=wcStartGame;
 document.getElementById('wcSubmit').onclick=wcSubmitFeedback;
+document.getElementById('wcReject').onclick=wcRejectCurrent;
 document.getElementById('wcUndo').onclick=wcUndo;
 document.getElementById('wcReset').onclick=()=>wcResetState(false);
 document.getElementById('wcFeedback').addEventListener('keydown',(e)=>{ if(e.key==='Enter'){e.preventDefault();wcSubmitFeedback();} });
