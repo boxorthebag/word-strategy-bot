@@ -46,6 +46,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .kpi b{font-size:22px;display:block}
 .reco{border:1px solid var(--line);border-radius:12px;padding:12px;margin:8px 0}
 .reco strong{font-size:20px;letter-spacing:2px}
+#testerResult strong{font-size:30px;letter-spacing:3px}
 .reco .meta{font-size:12px;color:#666;margin-top:4px}
 .cands{max-height:250px;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;line-height:1.7;background:#fafafa;border:1px solid #e0e0dd;border-radius:10px;padding:10px}
 .testtable{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}
@@ -63,7 +64,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 <header>
   <h1>Word Strategy Bot</h1>
   <span class="badge">Wordle + Canuckle testing</span>
-  <span class="badge">entropy + solve probability + archive testing</span>
+  <span class="badge">entropy + solve probability + fast tester mode</span>
 </header>
 
 <main>
@@ -87,6 +88,24 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
     <button id="analyze">Analyze board</button>
     <button id="reset" class="secondary">Reset</button>
     <button id="todayExample" class="secondary">Load today's example</button>
+  </div>
+
+  <hr>
+  <h3>Tester Mode</h3>
+  <div class="note">
+    Fast entry for browser automation. Enter one completed guess per line as:
+    <b>WORD 01220</b> where 0 = gray, 1 = yellow, 2 = green/red.
+    This uses the same strategy engine as the normal visual board.
+  </div>
+  <textarea id="testerInput" placeholder="SLATE 00002&#10;CRONY 00000" style="min-height:100px;margin-top:10px"></textarea>
+  <div class="row" style="margin-top:8px">
+    <button id="testerNext">Get next word</button>
+    <button id="testerClear" class="secondary">Clear tester</button>
+  </div>
+  <div id="testerResult" class="reco" style="display:none;margin-top:10px">
+    <div class="small">Tester recommendation</div>
+    <strong id="testerNextWord">—</strong>
+    <div class="meta" id="testerMeta"></div>
   </div>
 
   <hr>
@@ -148,7 +167,7 @@ This is a testing build. Batch archive mode automatically plays the bot against 
 const WORDLE_ANS_URL='https://raw.githubusercontent.com/dbraginskiy/wordle/master/wordle-answers.txt';
 const GUESS_URL='https://raw.githubusercontent.com/tabatkins/wordle-list/main/words';
 
-const FALLBACK = (`slate crane crony humid fudge peeve pixie smash swash image arise raise stare irate later alert alter`).split(/\s+/);
+const FALLBACK = (`aback abase abate abbey abbot about above abuse acute adobe adopt adore adult after again agent agile aging agony agree ahead aisle alarm album alert alien align alike alive allow alone alter amaze amber amend amiss among ample amuse angel anger angle angry ankle apple apply apron arena argue arise armor aroma arose array aside asset audio audit avoid awake award aware awful bacon badge badly baker balmy banal barge basic basil basin batch bathe baton beach beard beast began bench berry birch black blame bland blast blend blind block blood board boast brain brake brand brave bread break brick bride brief bring broad broke brown brush build cable canoe carry cause chain chair charm chart chase cheap check cheek chest chief child chill choir chose civic claim class clean clear clerk click climb clock close cloud coach coast color could count court cover crack craft crash crazy cream crime cross crowd crown crude crush daily dairy dance death debut delay devil diary digit dirty doubt dozen draft drama dream dress drink drive eager early earth eight elder elite empty enemy enjoy enter entry equal error event every exact extra faith false fault favor feast field fifty fight final first flame flash fleet floor flour focus force forth forty forum found frame fresh front frost fruit giant given glass globe glory grace grade grain grand grant grape graph grasp grass great green grief gross group guard guess guest guide happy heart heavy hedge honey horse hotel house human humor ideal image imply index inner input issue ivory joint judge known label large later laugh layer learn leave legal lemon light limit local loose lucky lunch magic major maker maple march match maybe mayor medal media merit metal might minor model money month moral motor mount mouse movie music never night noise north novel nurse occur ocean offer often olive other ought outer owner paint panel paper party peace phone photo piece pilot pitch place plain plane plant plate point pound power press price pride prime print prior prize prove queen quick quiet radio raise range rapid reach ready reply right river rough round route royal rural scale scene scope score sense serve seven shall shape share sharp sheet shelf shell shift shine shirt shock shoot short shown sight since skill sleep small smart smile smoke solid solve sorry sound south space spare speak speed spend spice spike split sport staff stage stain stand stare start state steam steel stick still stock stone store story strip study style sugar suite table taste teach thank theme there thick thing think third those three throw today total touch tough tower track trade train treat trend trial tribe truck truly trust truth twice under union unity until upper upset urban usage usual vague valid value video visit vital voice waste watch water wheel where which while white whole woman world worry worse worth would write wrong young youth`).split(/\s+/);
 
 let answerWords=[...FALLBACK], guessWords=[...FALLBACK], customList=null;
 let rows=[];
@@ -378,6 +397,63 @@ async function simulate(){
 }
 document.getElementById('simulate').onclick=simulate;
 
+
+
+function parseTesterLines(){
+  const raw=document.getElementById('testerInput').value.trim();
+  if(!raw) return [];
+  const lines=raw.split(/\n+/).map(x=>x.trim()).filter(Boolean);
+  const br=[];
+  for(const line of lines){
+    const m=line.match(/^([A-Za-z]{5})\s+([012]{5})$/);
+    if(!m) throw new Error(`Invalid tester line: "${line}". Use WORD 01220 format.`);
+    br.push([m[1].toLowerCase(),m[2]]);
+  }
+  return br;
+}
+
+function testerRecommend(){
+  const resultBox=document.getElementById('testerResult');
+  const nextWord=document.getElementById('testerNextWord');
+  const meta=document.getElementById('testerMeta');
+  try{
+    const br=parseTesterLines();
+    const base=(customList?customList:answerWords);
+    const candidates=filterAnswers(base,br);
+
+    if(!candidates.length){
+      resultBox.style.display='block';
+      nextWord.textContent='NO CANDIDATES';
+      meta.textContent='Check the feedback codes or active answer list.';
+      return;
+    }
+
+    if(candidates.length===1){
+      resultBox.style.display='block';
+      nextWord.textContent='NEXT: '+candidates[0].toUpperCase();
+      meta.textContent='1 candidate • Best solve';
+      return;
+    }
+
+    const r=scoreRecommendations(candidates,br);
+    const chosen=(candidates.length<=3 ? (r.bestSolve||r.bestHybrid||r.bestInfo) : (r.bestHybrid||r.bestSolve||r.bestInfo));
+    const source=candidates.length<=3 ? 'Best solve' : 'Hybrid';
+
+    resultBox.style.display='block';
+    nextWord.textContent='NEXT: '+chosen.word.toUpperCase();
+    meta.textContent=`${candidates.length} candidates • ${source} • entropy ${chosen.H.toFixed(2)} bits • expected pool ${chosen.expected.toFixed(1)} • worst case ${chosen.worst}`;
+  }catch(err){
+    resultBox.style.display='block';
+    nextWord.textContent='ENTRY ERROR';
+    meta.textContent=err.message;
+  }
+}
+
+document.getElementById('testerNext').onclick=testerRecommend;
+document.getElementById('testerClear').onclick=()=>{
+  document.getElementById('testerInput').value='';
+  document.getElementById('testerResult').style.display='none';
+};
 
 let lastBatchResults=[];
 
