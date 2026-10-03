@@ -68,7 +68,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 <header>
   <h1>Word Strategy Bot</h1>
   <span class="badge">Wordle + Canuckle testing</span>
-  <span class="badge">entropy + solve probability + automatic game logging v11</span>
+  <span class="badge">entropy + solve probability + automatic game logging v12</span>
 </header>
 
 <main>
@@ -124,7 +124,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
                placeholder="01220" style="width:130px;font-size:22px;letter-spacing:3px;text-align:center">
         <button id="wcSubmit">Submit result</button>
       </div>
-      <div class="small" style="margin-top:6px">Example: 00002 = first four gray, last letter green. Enter 2 by itself to mark the word solved.</div>
+      <div class="small" style="margin-top:6px">Example: 00002 = first four gray, last letter green. Enter 3 by itself to mark the word solved.</div>
     </div>
 
     <div class="row" style="margin-top:10px">
@@ -582,8 +582,8 @@ function wcSubmitFeedback(){
   if(!wcState.active || wcState.solved) return;
   const el=document.getElementById('wcFeedback');
   let p=(el.value||'').trim();
-  if(p==='2') p='22222';
-  if(!/^[012]{5}$/.test(p)){ alert('Enter five digits using only 0, 1, and 2 — or enter 2 by itself for a win.'); el.focus(); return; }
+  if(p==='3') p='22222';
+  if(!/^[012]{5}$/.test(p)){ alert('Enter five digits using only 0, 1, and 2 — or enter 3 by itself for a win.'); el.focus(); return; }
 
   const guess=wcState.currentGuess.toLowerCase();
   const d=wcState.currentDecision||{};
