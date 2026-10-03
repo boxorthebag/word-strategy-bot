@@ -68,7 +68,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 <header>
   <h1>Word Strategy Bot</h1>
   <span class="badge">Wordle + Canuckle testing</span>
-  <span class="badge">entropy + solve probability + full offline dictionaries v23</span>
+  <span class="badge">entropy + solve probability + candidate-filter fix v26</span>
 </header>
 
 <main>
@@ -17423,9 +17423,11 @@ async function loadLists(){
   if(!okG) guessWords=[...new Set([...guessWords,...answerWords])];
 
   if(status){
+    const reg=runRegressionChecks();
     status.textContent =
       `Ready: ${answerWords.length.toLocaleString()} answers • ${guessWords.length.toLocaleString()} guesses`+
-      ((!okA || !okG) ? ' • embedded fallback used where remote lists were unavailable' : '');
+      ((!okA || !okG) ? ' • embedded fallback used where remote lists were unavailable' : '')+
+      (reg.ok ? ` • regression check OK (${reg.count} candidates)` : ' • REGRESSION CHECK FAILED');
   }
 }
 function buildGrid(){
@@ -17529,6 +17531,16 @@ function boardRows(){
 }
 function filterAnswers(list, br){
   return list.filter(ans=>br.every(([g,p])=>feedback(g,ans)===p));
+}
+
+function runRegressionChecks(){
+  const test=filterAnswers(answerWords,[['slate','20000'],['shown','20200']]);
+  const expected=['scour','smock','smoky','spoof','scoop','scoff','spook'];
+  const ok=expected.every(w=>test.includes(w)) && test.length>=expected.length;
+  if(!ok){
+    console.error('Regression failure: SLATE 20000 + SHOWN 20200',test);
+  }
+  return {ok,count:test.length,candidates:test};
 }
 function entropyFor(guess, candidates){
   const map=new Map();
@@ -17641,7 +17653,7 @@ document.getElementById('simulate').onclick=simulate;
 
 
 
-const WC_KEY='wordStrategyBot_workController_v2';
+const WC_KEY='wordStrategyBot_workController_v26';
 const LOG_KEY='wordStrategyBot_completedGames_v1';
 
 let wcState={
