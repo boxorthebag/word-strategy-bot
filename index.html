@@ -34,6 +34,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .guessrow{display:grid;grid-template-columns:repeat(5,58px);gap:8px;align-items:center}
 .tilewrap{position:relative;width:58px;height:58px}
 .tile{width:58px;height:58px;border:2px solid #cfcfcf;border-radius:7px;text-transform:uppercase;text-align:center;font-size:28px;font-weight:800;padding:0;background:#fff;color:#111}
+.tile.empty{background:#fff!important;color:#111!important;border-color:#cfcfcf!important}
 .tile.gray{background:var(--gray);border-color:var(--gray);color:#fff}
 .tile.yellow{background:var(--yellow);border-color:var(--yellow);color:#fff}
 .tile.green{background:var(--green);border-color:var(--green);color:#fff}
@@ -68,7 +69,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 <header>
   <h1>Word Strategy Bot</h1>
   <span class="badge">Wordle + Canuckle testing</span>
-  <span class="badge">entropy + solve probability + synced board + override v16</span>
+  <span class="badge">entropy + solve probability + synced board + override v17</span>
 </header>
 
 <main>
@@ -274,10 +275,14 @@ function buildGrid(){
     for(let i=0;i<5;i++){
       const wrap=document.createElement('div'); wrap.className='tilewrap';
       const inp=document.createElement('input'); inp.className='tile'; inp.maxLength=1;
-      inp.dataset.state=(old[r] && old[r].states[i]) || '0'; inp.title='gray';
+      inp.dataset.state=(old[r] && old[r].states[i]) || '0';
+      inp.title='';
       inp.value=(old[r] && old[r].letters[i]) || '';
+      if(!inp.value) inp.classList.add('empty');
       inp.addEventListener('input',()=>{
         inp.value=inp.value.toUpperCase().replace(/[^A-Z]/g,'');
+        if(inp.value) inp.classList.remove('empty');
+        else inp.classList.add('empty');
         if(inp.value && i<4) inputs[i+1].focus();
       });
 
@@ -321,7 +326,7 @@ function buildGrid(){
       b.style.borderRadius='50%'; b.style.background='rgba(0,0,0,.12)';
       wrap.appendChild(b);
       rowEl.appendChild(wrap); inputs.push(inp); states.push(inp);
-      paintState(inp);
+      if(inp.value) paintState(inp);
     }
     grid.appendChild(rowEl); rows.push({inputs,states});
   }
@@ -437,7 +442,7 @@ function analyze(){
   return {candidates,recs:r};
 }
 document.getElementById('analyze').onclick=analyze;
-document.getElementById('reset').onclick=()=>{rows=[];buildGrid();document.getElementById('secret').value='';document.getElementById('simlog').textContent='';document.getElementById('recs').innerHTML='<div class="small">Enter feedback, then analyze.</div>';document.getElementById('cands').textContent='—';['candCount','deadCount','greenCount','avgRemain'].forEach(id=>document.getElementById(id).textContent='—');};
+document.getElementById('reset').onclick=()=>{rows=[];buildGrid();clearVisualBoard();document.getElementById('secret').value='';document.getElementById('simlog').textContent='';document.getElementById('recs').innerHTML='<div class="small">Enter feedback, then analyze.</div>';document.getElementById('cands').textContent='—';['candCount','deadCount','greenCount','avgRemain'].forEach(id=>document.getElementById(id).textContent='—');};
 document.getElementById('todayExample').onclick=()=>{
   rows=[];buildGrid();
   const ex=[['SLATE','00002'],['CRONY','00000'],['FUDGE','00002']];
@@ -609,31 +614,44 @@ function finalizeGame(){
 }
 
 
+function ensureVisualBoard(){
+  if(!rows || rows.length!==6){
+    buildGrid();
+  }
+}
+
 function clearVisualBoard(){
-  if(!rows || !rows.length) return;
+  ensureVisualBoard();
   for(const r of rows){
     for(let i=0;i<5;i++){
-      r.inputs[i].value='';
-      r.states[i].dataset.state='0';
-      r.states[i].classList.remove('gray','yellow','green','canucklegreen');
-      r.states[i].style.background='#fff';
-      r.states[i].style.color='#111';
-      r.states[i].style.borderColor='#cfcfcf';
-      r.states[i].title='';
+      const inp=r.inputs[i];
+      inp.value='';
+      inp.dataset.state='0';
+      inp.classList.remove('gray','yellow','green','canucklegreen');
+      inp.classList.add('empty');
+      inp.removeAttribute('style');
+      inp.title='';
     }
   }
 }
 
 function setVisualTileState(inp,state){
+  inp.classList.remove('empty');
   inp.dataset.state=String(state);
-  inp.style.background='';
-  inp.style.color='';
-  inp.style.borderColor='';
+  inp.removeAttribute('style');
   paintState(inp);
 }
 
 function syncVisualBoard(){
-  if(!rows || !rows.length) return;
+  ensureVisualBoard();
+
+  // Preserve a manually typed override in the current row while repainting history.
+  const currentIndex=wcState.history.length;
+  let pending='';
+  if(currentIndex>=0 && currentIndex<rows.length){
+    pending=rows[currentIndex].inputs.map(x=>x.value||'').join('');
+  }
+
   clearVisualBoard();
 
   wcState.history.slice(0,6).forEach((h,rowIndex)=>{
@@ -644,6 +662,14 @@ function syncVisualBoard(){
       setVisualTileState(rows[rowIndex].states[i], pattern[i]||'0');
     }
   });
+
+  // Put back any current-row manual word that has not yet been submitted.
+  if(pending && currentIndex<rows.length){
+    for(let i=0;i<5;i++){
+      rows[currentIndex].inputs[i].value=pending[i]||'';
+      if(pending[i]) rows[currentIndex].inputs[i].classList.remove('empty');
+    }
+  }
 }
 
 function getVisualOverrideWord(){
@@ -972,29 +998,3 @@ async function runBatch(){
   const details=results.map(r=>{
     const path=r.turns.map(t=>t.guess.toUpperCase()).join(' → ');
     return `${r.answer.toUpperCase().padEnd(6)}  ${r.solved ? r.guesses+' guesses' : 'FAIL'}  ${path}${r.reason?'  ['+r.reason+']':''}`;
-  }).join('\n');
-
-  const d=document.getElementById('batchDetails');
-  d.textContent=details;
-  d.style.display='block';
-  document.getElementById('batchCsv').disabled=false;
-  btn.disabled=false;
-  btn.textContent='Run full archive test';
-}
-
-function downloadBatchCsv(){
-  if(!lastBatchResults.length)return;
-  const rows=[['answer','solved','guesses','path','reason']];
-  for(const r of lastBatchResults){
-    rows.push([
-      r.answer.toUpperCase(),
-      r.solved?'yes':'no',
-      r.guesses??'',
-      r.turns.map(t=>t.guess.toUpperCase()).join(' > '),
-      r.reason||''
-    ]);
-  }
-  const csv=rows.map(row=>row.map(v=>`"${String(v).replaceAll('"','""')}"`).join(',')).join('\n');
-  const blob=new Blob([csv],{type:'text/csv'});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');
