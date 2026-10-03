@@ -64,7 +64,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 <header>
   <h1>Word Strategy Bot</h1>
   <span class="badge">Wordle + Canuckle testing</span>
-  <span class="badge">entropy + solve probability + Work test controller</span>
+  <span class="badge">entropy + solve probability + Work controller v9</span>
 </header>
 
 <main>
@@ -156,7 +156,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
     <button id="useCustom" class="secondary">Use pasted list</button>
     <button id="clearCustom" class="secondary">Clear custom list</button>
   </div>
-  <div class="small" id="dictStatus">Loading word lists…</div>
+  <div class="small" id="dictStatus">Ready with embedded word lists.</div>
 </section>
 
 <section class="card">
@@ -200,19 +200,42 @@ function cleanWords(text){
   return [...new Set(text.toLowerCase().match(/[a-z]{5}/g)||[])].filter(w=>w.length===5);
 }
 async function loadLists(){
+  const status=document.getElementById('dictStatus');
+  // The app is usable immediately with its embedded fallback lists.
+  if(status) status.textContent=`Ready with embedded list: ${answerWords.length.toLocaleString()} answers • ${guessWords.length.toLocaleString()} guesses. Expanding lists in background…`;
+
+  const fetchText = async (url, ms=5000) => {
+    const ctl=new AbortController();
+    const timer=setTimeout(()=>ctl.abort(),ms);
+    try{
+      const r=await fetch(url,{signal:ctl.signal,cache:'no-store'});
+      if(!r.ok) throw new Error(`HTTP ${r.status}`);
+      return await r.text();
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
   let okA=false, okG=false;
   try{
-    const t=await fetch(WORDLE_ANS_URL).then(r=>r.text());
-    const a=cleanWords(t); if(a.length>2000){answerWords=a;okA=true;}
+    const t=await fetchText(WORDLE_ANS_URL);
+    const a=cleanWords(t);
+    if(a.length>2000){answerWords=a;okA=true;}
   }catch(e){}
+
   try{
-    const t=await fetch(GUESS_URL).then(r=>r.text());
-    const g=cleanWords(t); if(g.length>5000){guessWords=g;okG=true;}
+    const t=await fetchText(GUESS_URL);
+    const g=cleanWords(t);
+    if(g.length>5000){guessWords=g;okG=true;}
   }catch(e){}
+
   if(!okG) guessWords=[...new Set([...guessWords,...answerWords])];
-  document.getElementById('dictStatus').textContent =
-    `Wordle answers: ${answerWords.length.toLocaleString()} • guess pool: ${guessWords.length.toLocaleString()}`+
-    (!okA?' • offline fallback active':'');
+
+  if(status){
+    status.textContent =
+      `Ready: ${answerWords.length.toLocaleString()} answers • ${guessWords.length.toLocaleString()} guesses`+
+      ((!okA || !okG) ? ' • embedded fallback used where remote lists were unavailable' : '');
+  }
 }
 function buildGrid(){
   const grid=document.getElementById('guessGrid');
@@ -424,68 +447,6 @@ document.getElementById('simulate').onclick=simulate;
 
 
 
-function parseTesterLines(){
-  const raw=document.getElementById('testerInput').value.trim();
-  if(!raw) return [];
-  const lines=raw.split(/\n+/).map(x=>x.trim()).filter(Boolean);
-  const br=[];
-  for(const line of lines){
-    const m=line.match(/^([A-Za-z]{5})\s+([012]{5})$/);
-    if(!m) throw new Error(`Invalid tester line: "${line}". Use WORD 01220 format.`);
-    br.push([m[1].toLowerCase(),m[2]]);
-  }
-  return br;
-}
-
-function testerRecommend(){
-  const resultBox=document.getElementById('testerResult');
-  const nextWord=document.getElementById('testerNextWord');
-  const meta=document.getElementById('testerMeta');
-  try{
-    const br=parseTesterLines();
-    const base=(customList?customList:answerWords);
-    const candidates=filterAnswers(base,br);
-
-    if(!candidates.length){
-      resultBox.style.display='block';
-      nextWord.textContent='NO CANDIDATES';
-      meta.textContent='Check the feedback codes or active answer list.';
-      return;
-    }
-
-    if(candidates.length===1){
-      resultBox.style.display='block';
-      nextWord.textContent='NEXT: '+candidates[0].toUpperCase();
-      meta.textContent='1 candidate • Best solve';
-      return;
-    }
-
-    const r=scoreRecommendations(candidates,br);
-    let chosen=(candidates.length<=3 ? (r.bestSolve||r.bestHybrid||r.bestInfo) : (r.bestHybrid||r.bestSolve||r.bestInfo));
-    const source=candidates.length<=3 ? 'Best solve' : 'Hybrid';
-
-    if(!chosen){
-      resultBox.style.display='block';
-      nextWord.textContent='NO NEW GUESS';
-      meta.textContent='All recommended words have already been played. Check the feedback history.';
-      return;
-    }
-
-    resultBox.style.display='block';
-    nextWord.textContent='NEXT: '+chosen.word.toUpperCase();
-    meta.textContent=`${candidates.length} candidates • ${source} • entropy ${chosen.H.toFixed(2)} bits • expected pool ${chosen.expected.toFixed(1)} • worst case ${chosen.worst}`;
-  }catch(err){
-    resultBox.style.display='block';
-    nextWord.textContent='ENTRY ERROR';
-    meta.textContent=err.message;
-  }
-}
-
-document.getElementById('testerNext').onclick=testerRecommend;
-document.getElementById('testerClear').onclick=()=>{
-  document.getElementById('testerInput').value='';
-  document.getElementById('testerResult').style.display='none';
-};
 
 
 const WC_KEY='wordStrategyBot_workController_v1';
