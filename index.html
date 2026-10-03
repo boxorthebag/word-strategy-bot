@@ -68,7 +68,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 <header>
   <h1>Word Strategy Bot</h1>
   <span class="badge">Wordle + Canuckle testing</span>
-  <span class="badge">entropy + solve probability + stable override + board sync v19</span>
+  <span class="badge">entropy + solve probability + family-trap probes v21</span>
 </header>
 
 <main>
@@ -201,7 +201,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
   <div class="note">
     <b>Best solve</b> favours a word that can actually be the answer.
     <b>Best information</b> favours the guess that splits the remaining pool most evenly.
-    <b>Hybrid</b> balances both. The controller switches to <b>Best solve</b> when the board is strongly constrained: 3 or fewer candidates, 2 or more greens, or 1 green with 10 or fewer candidates.
+    <b>Hybrid</b> balances both. The controller usually switches to <b>Best solve</b> when the board is strongly constrained. But when several answers form a tight word family—especially a shared two-letter-or-longer ending—and a non-answer probe splits that family substantially better, it temporarily uses a <b>Family probe</b> instead of guessing family members one by one.
   </div>
 </section>
 </main>
@@ -557,16 +557,68 @@ function wcChooseNext(){
   //   - two or more positions are already green, OR
   //   - one position is green and 10 or fewer candidates remain.
   const greenPositions=new Set();
+  const confirmedLetters=new Set();
   for(const [g,p] of br){
-    for(let i=0;i<5;i++) if(p[i]==='2') greenPositions.add(i);
+    for(let i=0;i<5;i++){
+      if(p[i]==='2') greenPositions.add(i);
+      if(p[i]==='1' || p[i]==='2') confirmedLetters.add(g[i]);
+    }
   }
   const greens=greenPositions.size;
-  const solveFirst = candidates.length<=3 || greens>=2 || (greens>=1 && candidates.length<=10);
+  const confirmed=confirmedLetters.size;
 
-  let chosen = solveFirst
-    ? (r.bestSolve||r.bestHybrid||r.bestInfo)
-    : (r.bestHybrid||r.bestSolve||r.bestInfo);
-  let source = solveFirst ? 'Best solve' : 'Hybrid';
+  // Switch to an actual possible answer once the board is meaningfully constrained.
+  // In particular, 3+ confirmed letters (yellow or green) is enough to stop using
+  // impossible probe words such as TREED after SLATE shows A/T/E present.
+  const solveFirst =
+    candidates.length<=3 ||
+    greens>=2 ||
+    confirmed>=3 ||
+    (greens>=1 && candidates.length<=10) ||
+    (confirmed>=2 && candidates.length<=12);
+
+  // Detect a Wordle "family trap": several remaining answers share the same
+  // ending/pattern and an information probe can distinguish them much more
+  // efficiently than guessing family members one by one.
+  let sharedSuffix=0;
+  for(let pos=4;pos>=0;pos--){
+    const ch=candidates[0][pos];
+    if(candidates.every(w=>w[pos]===ch)) sharedSuffix++;
+    else break;
+  }
+
+  let sharedPositions=0;
+  for(let pos=0;pos<5;pos++){
+    const ch=candidates[0][pos];
+    if(candidates.every(w=>w[pos]===ch)) sharedPositions++;
+  }
+
+  const infoBetterThanSolve =
+    r.bestInfo && r.bestSolve &&
+    !r.bestInfo.isCandidate &&
+    (
+      r.bestInfo.expected <= r.bestSolve.expected * 0.78 ||
+      r.bestInfo.worst <= r.bestSolve.worst - 2 ||
+      r.bestInfo.H >= r.bestSolve.H + 0.40
+    );
+
+  const familyTrap =
+    candidates.length >= 4 &&
+    candidates.length <= 15 &&
+    (sharedSuffix >= 2 || sharedPositions >= 2) &&
+    infoBetterThanSolve;
+
+  let chosen, source;
+  if(familyTrap){
+    chosen=r.bestInfo;
+    source='Family probe';
+  }else if(solveFirst){
+    chosen=(r.bestSolve||r.bestHybrid||r.bestInfo);
+    source='Best solve';
+  }else{
+    chosen=(r.bestHybrid||r.bestSolve||r.bestInfo);
+    source='Hybrid';
+  }
 
   if(!chosen || played.has(chosen.word)){
     const fallback=candidates.find(w=>!played.has(w));
@@ -946,40 +998,3 @@ async function runBatch(){
     return `${r.answer.toUpperCase().padEnd(6)}  ${r.solved ? r.guesses+' guesses' : 'FAIL'}  ${path}${r.reason?'  ['+r.reason+']':''}`;
   }).join('\n');
 
-  const d=document.getElementById('batchDetails');
-  d.textContent=details;
-  d.style.display='block';
-  document.getElementById('batchCsv').disabled=false;
-  btn.disabled=false;
-  btn.textContent='Run full archive test';
-}
-
-function downloadBatchCsv(){
-  if(!lastBatchResults.length)return;
-  const rows=[['answer','solved','guesses','path','reason']];
-  for(const r of lastBatchResults){
-    rows.push([
-      r.answer.toUpperCase(),
-      r.solved?'yes':'no',
-      r.guesses??'',
-      r.turns.map(t=>t.guess.toUpperCase()).join(' > '),
-      r.reason||''
-    ]);
-  }
-  const csv=rows.map(row=>row.map(v=>`"${String(v).replaceAll('"','""')}"`).join(',')).join('\n');
-  const blob=new Blob([csv],{type:'text/csv'});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');
-  a.href=url;a.download='word-strategy-bot-archive-results.csv';
-  document.body.appendChild(a);a.click();a.remove();
-  setTimeout(()=>URL.revokeObjectURL(url),500);
-}
-
-document.getElementById('batchTest').onclick=runBatch;
-document.getElementById('batchCsv').onclick=downloadBatchCsv;
-
-buildGrid();
-loadLists();
-</script>
-</body>
-</html>
