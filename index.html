@@ -95,7 +95,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
   <div class="note">
     Fast entry for browser automation. Enter one completed guess per line as:
     <b>WORD 01220</b> where 0 = gray, 1 = yellow, 2 = green/red.
-    This uses the same strategy engine as the normal visual board.
+    This uses the same strategy engine as the normal visual board. Previously played guesses are automatically excluded from future recommendations.
   </div>
   <textarea id="testerInput" placeholder="SLATE 00002&#10;CRONY 00000" style="min-height:100px;margin-top:10px"></textarea>
   <div class="row" style="margin-top:8px">
@@ -314,7 +314,8 @@ function candidateLetterStats(candidates){
 function repeatEBonus(guess, br, candidates){ return 0; }
 function scoreRecommendations(candidates, br){
   const hard=document.getElementById('hardMode').checked;
-  let pool=guessWords;
+  const alreadyPlayed=new Set(br.map(x=>x[0]));
+  let pool=guessWords.filter(w=>!alreadyPlayed.has(w));
   if(customList && document.getElementById('game').value==='canuckle'){
     // guesses can still come from generic list, but add archive words
     pool=[...new Set([...guessWords,...customList])];
@@ -326,7 +327,7 @@ function scoreRecommendations(candidates, br){
     let s=0; for(const ch of new Set(w)) s+=(lf[ch]||0);
     return [w,s];
   }).sort((a,b)=>b[1]-a[1]).slice(0,Math.min(3000,pool.length)).map(x=>x[0]);
-  const scorePool=[...new Set([...candidates,...probes])];
+  const scorePool=[...new Set([...candidates.filter(w=>!alreadyPlayed.has(w)),...probes])];
 
   const candSet=new Set(candidates);
   let bestInfo=null,bestSolve=null,bestHybrid=null;
@@ -436,8 +437,15 @@ function testerRecommend(){
     }
 
     const r=scoreRecommendations(candidates,br);
-    const chosen=(candidates.length<=3 ? (r.bestSolve||r.bestHybrid||r.bestInfo) : (r.bestHybrid||r.bestSolve||r.bestInfo));
+    let chosen=(candidates.length<=3 ? (r.bestSolve||r.bestHybrid||r.bestInfo) : (r.bestHybrid||r.bestSolve||r.bestInfo));
     const source=candidates.length<=3 ? 'Best solve' : 'Hybrid';
+
+    if(!chosen){
+      resultBox.style.display='block';
+      nextWord.textContent='NO NEW GUESS';
+      meta.textContent='All recommended words have already been played. Check the feedback history.';
+      return;
+    }
 
     resultBox.style.display='block';
     nextWord.textContent='NEXT: '+chosen.word.toUpperCase();
