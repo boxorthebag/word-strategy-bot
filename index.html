@@ -64,7 +64,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 <header>
   <h1>Word Strategy Bot</h1>
   <span class="badge">Wordle + Canuckle testing</span>
-  <span class="badge">entropy + solve probability + fast tester mode</span>
+  <span class="badge">entropy + solve probability + Work test controller</span>
 </header>
 
 <main>
@@ -91,21 +91,45 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
   </div>
 
   <hr>
-  <h3>Tester Mode</h3>
+  <h3>Work Test Controller</h3>
   <div class="note">
-    Fast entry for browser automation. Enter one completed guess per line as:
-    <b>WORD 01220</b> where 0 = gray, 1 = yellow, 2 = green/red.
-    This uses the same strategy engine as the normal visual board. Previously played guesses are automatically excluded from future recommendations.
+    Built for browser automation. The controller owns the guess history.
+    Work only enters the five-digit feedback code:
+    <b>0 = gray, 1 = yellow, 2 = green/red</b>.
+    It will never intentionally recommend a word already played in the current game.
   </div>
-  <textarea id="testerInput" placeholder="SLATE 00002&#10;CRONY 00000" style="min-height:100px;margin-top:10px"></textarea>
-  <div class="row" style="margin-top:8px">
-    <button id="testerNext">Get next word</button>
-    <button id="testerClear" class="secondary">Clear tester</button>
-  </div>
-  <div id="testerResult" class="reco" style="display:none;margin-top:10px">
-    <div class="small">Tester recommendation</div>
-    <strong id="testerNextWord">—</strong>
-    <div class="meta" id="testerMeta"></div>
+
+  <div id="workController" style="margin-top:12px">
+    <div class="kpis" style="margin-bottom:12px">
+      <div class="kpi"><span class="small">Game</span><b id="wcGame">—</b></div>
+      <div class="kpi"><span class="small">Guess</span><b id="wcTurn">—</b></div>
+      <div class="kpi"><span class="small">Candidates</span><b id="wcCandidates">—</b></div>
+      <div class="kpi"><span class="small">Status</span><b id="wcStatus" style="font-size:16px">Idle</b></div>
+    </div>
+
+    <div id="wcPlayBox" class="reco" style="display:none">
+      <div class="small">PLAY THIS WORD</div>
+      <strong id="wcPlayWord" style="font-size:34px;letter-spacing:4px">SLATE</strong>
+      <div class="meta" id="wcSource"></div>
+    </div>
+
+    <div id="wcFeedbackArea" style="display:none;margin-top:10px">
+      <label for="wcFeedback"><b>Enter result only</b></label>
+      <div class="row" style="margin-top:6px">
+        <input id="wcFeedback" type="text" maxlength="5" inputmode="numeric"
+               placeholder="01220" style="width:130px;font-size:22px;letter-spacing:3px;text-align:center">
+        <button id="wcSubmit">Submit result</button>
+      </div>
+      <div class="small" style="margin-top:6px">Example: 00002 = first four gray, last letter green.</div>
+    </div>
+
+    <div class="row" style="margin-top:10px">
+      <button id="wcStart">Start New Game</button>
+      <button id="wcUndo" class="secondary" disabled>Undo Last Result</button>
+      <button id="wcReset" class="secondary">Reset Controller</button>
+    </div>
+
+    <div id="wcHistory" class="cands" style="margin-top:10px;display:none"></div>
   </div>
 
   <hr>
@@ -462,6 +486,188 @@ document.getElementById('testerClear').onclick=()=>{
   document.getElementById('testerInput').value='';
   document.getElementById('testerResult').style.display='none';
 };
+
+
+const WC_KEY='wordStrategyBot_workController_v1';
+let wcState={game:0,active:false,solved:false,history:[],currentGuess:'slate',source:'Opening word'};
+
+function wcSave(){
+  try{localStorage.setItem(WC_KEY,JSON.stringify(wcState));}catch(e){}
+}
+function wcLoad(){
+  try{
+    const x=JSON.parse(localStorage.getItem(WC_KEY)||'null');
+    if(x && typeof x==='object') wcState=x;
+  }catch(e){}
+}
+function wcResetState(keepGame=false){
+  const g=keepGame ? (wcState.game||0) : 0;
+  wcState={game:g,active:false,solved:false,history:[],currentGuess:'slate',source:'Opening word'};
+  wcSave();
+  wcRender();
+}
+function wcStartGame(){
+  wcState={
+    game:(wcState.game||0)+1,
+    active:true,
+    solved:false,
+    history:[],
+    currentGuess:'slate',
+    source:'Opening word'
+  };
+  wcSave();
+  wcRender();
+  setTimeout(()=>document.getElementById('wcFeedback')?.focus(),50);
+}
+function wcCandidates(){
+  const base=(customList?customList:answerWords);
+  return filterAnswers(base,wcState.history.map(x=>[x.guess,x.pattern]));
+}
+function wcChooseNext(){
+  const br=wcState.history.map(x=>[x.guess,x.pattern]);
+  const candidates=wcCandidates();
+  if(!candidates.length) return {error:'No candidates match this feedback.'};
+
+  const played=new Set(wcState.history.map(x=>x.guess));
+  if(candidates.length===1 && !played.has(candidates[0])){
+    return {word:candidates[0],source:'Only candidate',count:1};
+  }
+
+  const r=scoreRecommendations(candidates,br);
+  let chosen = candidates.length<=3
+    ? (r.bestSolve||r.bestHybrid||r.bestInfo)
+    : (r.bestHybrid||r.bestSolve||r.bestInfo);
+
+  if(!chosen || played.has(chosen.word)){
+    const fallback=candidates.find(w=>!played.has(w));
+    if(fallback) return {word:fallback,source:'Fallback candidate',count:candidates.length};
+    return {error:'No unplayed recommendation available.'};
+  }
+  return {
+    word:chosen.word,
+    source:(candidates.length<=3?'Best solve':'Hybrid'),
+    count:candidates.length
+  };
+}
+function wcSubmitFeedback(){
+  if(!wcState.active || wcState.solved) return;
+  const el=document.getElementById('wcFeedback');
+  const p=(el.value||'').trim();
+  if(!/^[012]{5}$/.test(p)){
+    alert('Enter exactly five digits using only 0, 1, and 2.');
+    el.focus();
+    return;
+  }
+
+  const guess=wcState.currentGuess.toLowerCase();
+  wcState.history.push({guess,pattern:p,source:wcState.source});
+
+  if(p==='22222'){
+    wcState.solved=true;
+    wcState.active=false;
+    wcSave();
+    el.value='';
+    wcRender();
+    return;
+  }
+
+  const next=wcChooseNext();
+  if(next.error){
+    wcState.active=false;
+    wcState.source=next.error;
+    wcSave();
+    el.value='';
+    wcRender();
+    return;
+  }
+
+  wcState.currentGuess=next.word;
+  wcState.source=next.source;
+  wcSave();
+  el.value='';
+  wcRender();
+  setTimeout(()=>el.focus(),30);
+}
+function wcUndo(){
+  if(!wcState.history.length) return;
+  const last=wcState.history.pop();
+  wcState.currentGuess=last.guess;
+  wcState.source=last.source||'Previous guess';
+  wcState.solved=false;
+  wcState.active=true;
+  wcSave();
+  wcRender();
+  setTimeout(()=>document.getElementById('wcFeedback')?.focus(),30);
+}
+function wcRender(){
+  const game=document.getElementById('wcGame');
+  if(!game) return;
+
+  const turn=wcState.history.length+1;
+  game.textContent=wcState.game||'—';
+  document.getElementById('wcTurn').textContent=wcState.active||wcState.solved ? `${Math.min(turn,6)}/6` : '—';
+
+  let c='—';
+  if(wcState.game && wcState.history.length){
+    try{c=wcCandidates().length;}catch(e){}
+  } else if(wcState.active) {
+    c=answerWords.length;
+  }
+  document.getElementById('wcCandidates').textContent=c;
+
+  const status=document.getElementById('wcStatus');
+  const playBox=document.getElementById('wcPlayBox');
+  const feedbackArea=document.getElementById('wcFeedbackArea');
+  const history=document.getElementById('wcHistory');
+
+  if(wcState.solved){
+    status.textContent='SOLVED';
+    playBox.style.display='block';
+    document.getElementById('wcPlayWord').textContent='SOLVED';
+    document.getElementById('wcSource').textContent='Start a new game when ready.';
+    feedbackArea.style.display='none';
+  } else if(wcState.active){
+    status.textContent='Playing';
+    playBox.style.display='block';
+    document.getElementById('wcPlayWord').textContent='PLAY: '+wcState.currentGuess.toUpperCase();
+    document.getElementById('wcSource').textContent=wcState.source||'';
+    feedbackArea.style.display='block';
+  } else if(wcState.game){
+    status.textContent='Stopped';
+    playBox.style.display='block';
+    document.getElementById('wcPlayWord').textContent='CHECK FEEDBACK';
+    document.getElementById('wcSource').textContent=wcState.source||'Controller stopped.';
+    feedbackArea.style.display='none';
+  } else {
+    status.textContent='Idle';
+    playBox.style.display='none';
+    feedbackArea.style.display='none';
+  }
+
+  if(wcState.history.length){
+    history.style.display='block';
+    history.textContent=wcState.history.map((x,i)=>
+      `${i+1}. ${x.guess.toUpperCase()}  ${x.pattern}  [${x.source||''}]`
+    ).join('\n');
+  } else {
+    history.style.display='none';
+    history.textContent='';
+  }
+
+  document.getElementById('wcUndo').disabled=!wcState.history.length;
+}
+document.getElementById('wcStart').onclick=wcStartGame;
+document.getElementById('wcSubmit').onclick=wcSubmitFeedback;
+document.getElementById('wcUndo').onclick=wcUndo;
+document.getElementById('wcReset').onclick=()=>wcResetState(false);
+document.getElementById('wcFeedback').addEventListener('keydown',(e)=>{
+  if(e.key==='Enter'){e.preventDefault();wcSubmitFeedback();}
+});
+document.getElementById('wcFeedback').addEventListener('input',(e)=>{
+  e.target.value=e.target.value.replace(/[^012]/g,'').slice(0,5);
+});
+wcLoad();
+setTimeout(wcRender,0);
 
 let lastBatchResults=[];
 
