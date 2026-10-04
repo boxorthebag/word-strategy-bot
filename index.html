@@ -68,7 +68,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 <header>
   <h1>Word Strategy Bot</h1>
   <span class="badge">Wordle + Canuckle testing</span>
-  <span class="badge">entropy + solve probability + candidate-filter fix v26</span>
+  <span class="badge">entropy + solve probability + standalone dictionaries v27</span>
 </header>
 
 <main>
@@ -211,9 +211,6 @@ This is a testing build. Batch archive mode automatically plays the bot against 
 </div>
 
 <script>
-const WORDLE_ANS_URL='https://raw.githubusercontent.com/dbraginskiy/wordle/master/wordle-answers.txt';
-const GUESS_URL='https://raw.githubusercontent.com/tabatkins/wordle-list/main/words';
-
 const EMBEDDED_ANSWERS = (`cigar
 rebut
 sissy
@@ -17392,41 +17389,12 @@ function cleanWords(text){
 }
 async function loadLists(){
   const status=document.getElementById('dictStatus');
-  // The app is usable immediately with its embedded fallback lists.
-  if(status) status.textContent=`Ready: ${answerWords.length.toLocaleString()} embedded answers • ${guessWords.length.toLocaleString()} embedded guesses. Checking for updates in background…`;
-
-  const fetchText = async (url, ms=5000) => {
-    const ctl=new AbortController();
-    const timer=setTimeout(()=>ctl.abort(),ms);
-    try{
-      const r=await fetch(url,{signal:ctl.signal,cache:'no-store'});
-      if(!r.ok) throw new Error(`HTTP ${r.status}`);
-      return await r.text();
-    } finally {
-      clearTimeout(timer);
-    }
-  };
-
-  let okA=false, okG=false;
-  try{
-    const t=await fetchText(WORDLE_ANS_URL);
-    const a=cleanWords(t);
-    if(a.length>2000){answerWords=a;okA=true;}
-  }catch(e){}
-
-  try{
-    const t=await fetchText(GUESS_URL);
-    const g=cleanWords(t);
-    if(g.length>5000){guessWords=g;okG=true;}
-  }catch(e){}
-
-  if(!okG) guessWords=[...new Set([...guessWords,...answerWords])];
-
+  // Fully standalone: all word data is embedded in this HTML file.
+  guessWords=[...new Set([...guessWords,...answerWords])];
+  const reg=runRegressionChecks();
   if(status){
-    const reg=runRegressionChecks();
     status.textContent =
-      `Ready: ${answerWords.length.toLocaleString()} answers • ${guessWords.length.toLocaleString()} guesses`+
-      ((!okA || !okG) ? ' • embedded fallback used where remote lists were unavailable' : '')+
+      `Standalone: ${answerWords.length.toLocaleString()} embedded answers • ${guessWords.length.toLocaleString()} embedded guesses`+
       (reg.ok ? ` • regression check OK (${reg.count} candidates)` : ' • REGRESSION CHECK FAILED');
   }
 }
@@ -17653,7 +17621,7 @@ document.getElementById('simulate').onclick=simulate;
 
 
 
-const WC_KEY='wordStrategyBot_workController_v26';
+const WC_KEY='wordStrategyBot_workController_v27';
 const LOG_KEY='wordStrategyBot_completedGames_v1';
 
 let wcState={
