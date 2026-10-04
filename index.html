@@ -68,7 +68,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 <header>
   <h1>Word Strategy Bot</h1>
   <span class="badge">Wordle + Canuckle testing</span>
-  <span class="badge">entropy + solve probability + standalone dictionaries v28</span>
+  <span class="badge">entropy + solve probability + synced public UI v29</span>
 </header>
 
 <main>
@@ -94,6 +94,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
     <button id="todayExample" class="secondary">Load today's example</button>
   </div>
 
+  <div id="devTools" style="display:none">
   <hr>
   <h3>Work Test Controller</h3>
   <div class="note">
@@ -180,6 +181,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
     <button id="clearCustom" class="secondary">Clear custom list</button>
   </div>
   <div class="small" id="dictStatus">Ready with embedded word lists.</div>
+  </div>
 </section>
 
 <section class="card">
@@ -191,7 +193,14 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
     <div class="kpi"><span class="small">Avg. pool after best probe</span><b id="avgRemain">—</b></div>
   </div>
 
-  <h3>Recommendations</h3>
+  <h3>Recommended next play</h3>
+  <div id="nextPlay" class="reco" style="display:none">
+    <div class="small">PLAY THIS WORD</div>
+    <strong id="nextPlayWord" style="font-size:34px;letter-spacing:4px">SLATE</strong>
+    <div class="meta" id="nextPlayWhy"></div>
+  </div>
+
+  <h3>Analysis options</h3>
   <div id="recs"><div class="small">Enter feedback, then analyze.</div></div>
 
   <h3>Remaining answers</h3>
@@ -398,24 +407,175 @@ function renderRec(label,o){
   return `<div class="reco"><div class="small">${label}</div><strong>${o.word.toUpperCase()}</strong>
     <div class="meta">entropy ${o.H.toFixed(2)} bits • expected pool ${o.expected.toFixed(1)} • worst case ${o.worst} • ${o.splits} feedback patterns${o.eBonus?` • repeat-E bonus +${o.eBonus.toFixed(2)}`:''}</div></div>`;
 }
+
+function chooseNextForBoard(br,candidates){
+  const played=new Set(br.map(x=>x[0]));
+  if(!candidates.length) return {error:'No candidates match this feedback.',count:0};
+
+  if(candidates.length===1 && !played.has(candidates[0])){
+    return {word:candidates[0],source:'Only candidate',count:1,entropy:null,expected:1,worst:1};
+  }
+
+  const r=scoreRecommendations(candidates,br);
+  const greenPositions=new Set();
+  const confirmedLetters=new Set();
+  for(const [g,p] of br){
+    for(let i=0;i<5;i++){
+      if(p[i]==='2') greenPositions.add(i);
+      if(p[i]==='1' || p[i]==='2') confirmedLetters.add(g[i]);
+    }
+  }
+  const greens=greenPositions.size;
+  const confirmed=confirmedLetters.size;
+  const solveFirst =
+    candidates.length<=3 ||
+    greens>=2 ||
+    confirmed>=3 ||
+    (greens>=1 && candidates.length<=10) ||
+    (confirmed>=2 && candidates.length<=12);
+
+  let sharedSuffix=0;
+  for(let pos=4;pos>=0;pos--){
+    const ch=candidates[0][pos];
+    if(candidates.every(w=>w[pos]===ch)) sharedSuffix++;
+    else break;
+  }
+  let sharedPositions=0;
+  for(let pos=0;pos<5;pos++){
+    const ch=candidates[0][pos];
+    if(candidates.every(w=>w[pos]===ch)) sharedPositions++;
+  }
+
+  const infoBetterThanSolve =
+    r.bestInfo && r.bestSolve &&
+    !r.bestInfo.isCandidate &&
+    (
+      r.bestInfo.expected <= r.bestSolve.expected * 0.78 ||
+      r.bestInfo.worst <= r.bestSolve.worst - 2 ||
+      r.bestInfo.H >= r.bestSolve.H + 0.40
+    );
+
+  const familyTrap =
+    candidates.length >= 4 &&
+    candidates.length <= 15 &&
+    (sharedSuffix >= 2 || sharedPositions >= 2) &&
+    infoBetterThanSolve;
+
+  let chosen, source;
+  if(familyTrap){
+    chosen=r.bestInfo; source='Family probe';
+  }else if(solveFirst){
+    chosen=(r.bestSolve||r.bestHybrid||r.bestInfo); source='Best solve';
+  }else{
+    chosen=(r.bestHybrid||r.bestSolve||r.bestInfo); source='Hybrid';
+  }
+
+  if(!chosen || played.has(chosen.word)){
+    const fallback=candidates.find(w=>!played.has(w));
+    if(!fallback) return {error:'No unplayed recommendation available.',count:candidates.length};
+    return {word:fallback,source:'Fallback candidate',count:candidates.length,entropy:null,expected:null,worst:null};
+  }
+
+  return {
+    word:chosen.word, source, count:candidates.length,
+    entropy:safeNum(chosen.H), expected:safeNum(chosen.expected), worst:safeNum(chosen.worst)
+  };
+}
+
+function putWordOnGrid(rowIndex,word){
+  if(rowIndex<0 || rowIndex>=rows.length || !word) return;
+  const r=rows[rowIndex];
+  const current=r.inputs.map(x=>x.value).join('');
+  if(current.length && current.length<5) return; // never overwrite a friend's partial entry
+  if(current.length===5 && current.toLowerCase()!==word.toLowerCase()) return;
+  [...word.toUpperCase()].forEach((ch,i)=>r.inputs[i].value=ch);
+}
+
+function prefillOpeningWord(){
+  if(!rows.length) return;
+  const anyLetters=rows.some(r=>r.inputs.some(x=>x.value));
+  if(!anyLetters) putWordOnGrid(0,'slate');
+}
+
+function syncControllerFromGrid(br,choice,candidates){
+  if(!document.getElementById('wcGame')) return;
+  const base=(customList?customList:answerWords);
+  let running=base;
+  const hist=[];
+  br.forEach(([guess,pattern],i)=>{
+    const before=running.length;
+    running=filterAnswers(running,[[guess,pattern]]);
+    hist.push({
+      guess,pattern,source:'Grid entry',
+      suggestedWord:guess,manualOverride:false,
+      candidatesBefore:before,candidatesAfter:running.length,
+      entropy:null,expected:null,worst:null,alternatives:{}
+    });
+  });
+  wcState.game=wcState.game||1;
+  wcState.history=hist;
+  wcState.solved=br.length>0 && br[br.length-1][1]==='22222';
+  wcState.active=!wcState.solved && !!choice?.word;
+  wcState.currentGuess=choice?.word || '';
+  wcState.currentDecision={
+    source:choice?.source || (choice?.error||'Grid synced'),
+    candidateCount:candidates.length,
+    entropy:choice?.entropy??null, expected:choice?.expected??null, worst:choice?.worst??null,
+    alternatives:{}
+  };
+  wcSave();
+  wcRender();
+}
+
 function analyze(){
   const br=boardRows();
   const base=(customList?customList:answerWords);
   const candidates=filterAnswers(base,br);
   const info=knownInfo(br);
+
   document.getElementById('candCount').textContent=candidates.length;
   document.getElementById('deadCount').textContent=info.dead.size;
   document.getElementById('greenCount').textContent=info.greens.size;
-  document.getElementById('cands').textContent=candidates.length?candidates.map(w=>w.toUpperCase()).join('  '):'No candidates in the active answer list.';
-  if(!candidates.length){document.getElementById('recs').innerHTML='<div class="small">No candidates. Check the feedback or load a broader/custom answer list.</div>';document.getElementById('avgRemain').textContent='—';return null;}
+  document.getElementById('cands').textContent=
+    candidates.length ? candidates.map(w=>w.toUpperCase()).join('  ') : 'No candidates in the active answer list.';
+
+  const nextBox=document.getElementById('nextPlay');
+  if(!candidates.length){
+    document.getElementById('recs').innerHTML='<div class="small">No candidates. Check the feedback.</div>';
+    document.getElementById('avgRemain').textContent='—';
+    nextBox.style.display='block';
+    document.getElementById('nextPlayWord').textContent='CHECK FEEDBACK';
+    document.getElementById('nextPlayWhy').textContent='No answer matches the entered rows.';
+    syncControllerFromGrid(br,{error:'No candidates match this feedback.'},candidates);
+    return null;
+  }
+
   const r=scoreRecommendations(candidates,br);
   document.getElementById('recs').innerHTML=
     renderRec('Best solve',r.bestSolve)+renderRec('Best information',r.bestInfo)+renderRec('Hybrid',r.bestHybrid);
   document.getElementById('avgRemain').textContent=r.bestInfo.expected.toFixed(1);
-  return {candidates,recs:r};
+
+  const choice=chooseNextForBoard(br,candidates);
+  if(choice.word){
+    nextBox.style.display='block';
+    document.getElementById('nextPlayWord').textContent=choice.word.toUpperCase();
+    document.getElementById('nextPlayWhy').textContent=
+      `${choice.source} • ${choice.count} candidate${choice.count===1?'':'s'}`+
+      (choice.entropy!=null ? ` • entropy ${choice.entropy.toFixed(2)}` : '');
+
+    // Put the suggestion into the first unused row. The user can overwrite it
+    // simply by typing a different full word before the next analysis.
+    const firstUnused=rows.findIndex(r=>r.inputs.map(x=>x.value).join('').length<5);
+    if(firstUnused>=0) putWordOnGrid(firstUnused,choice.word);
+  }else{
+    nextBox.style.display='none';
+  }
+
+  syncControllerFromGrid(br,choice,candidates);
+  return {candidates,recs:r,choice};
 }
 document.getElementById('analyze').onclick=analyze;
-document.getElementById('reset').onclick=()=>{rows=[];buildGrid();document.getElementById('secret').value='';document.getElementById('simlog').textContent='';document.getElementById('recs').innerHTML='<div class="small">Enter feedback, then analyze.</div>';document.getElementById('cands').textContent='—';['candCount','deadCount','greenCount','avgRemain'].forEach(id=>document.getElementById(id).textContent='—');};
+document.getElementById('reset').onclick=()=>{rows=[];buildGrid();prefillOpeningWord();document.getElementById('secret').value='';document.getElementById('simlog').textContent='';document.getElementById('recs').innerHTML='<div class="small">Enter feedback, then analyze.</div>';document.getElementById('cands').textContent='—';document.getElementById('nextPlay').style.display='none';['candCount','deadCount','greenCount','avgRemain'].forEach(id=>document.getElementById(id).textContent='—');};
 document.getElementById('todayExample').onclick=()=>{
   rows=[];buildGrid();
   const ex=[['SLATE','00002'],['CRONY','00000'],['FUDGE','00002']];
@@ -504,6 +664,7 @@ function wcStartGame(){
   };
   wcSave();
   restoreControllerHistoryToBoard();
+  putWordOnGrid(0,'slate');
   if(document.getElementById('wcPlayedWord')) document.getElementById('wcPlayedWord').value='';
   wcRender();
   setTimeout(()=>document.getElementById('wcFeedback')?.focus(),50);
@@ -720,6 +881,7 @@ function wcSubmitFeedback(){
 
   wcState.currentGuess=next.word;
   wcState.currentDecision={source:next.source,candidateCount:next.count,entropy:next.entropy,expected:next.expected,worst:next.worst,alternatives:next.alternatives||{}};
+  putWordOnGrid(wcState.history.length,next.word);
   wcSave(); el.value=''; wcRender();
   setTimeout(()=>el.focus(),30);
 }
@@ -835,8 +997,7 @@ function exportLogsCsv(){
       const a=t.alternatives||{};
       rows.push([
         g.gameNumber,g.answer,g.guesses,t.turn,t.guess,t.feedback,t.candidatesBefore,t.candidatesAfter,t.source,t.suggestedWord,t.manualOverride,
-        t.entropy,t.expected,t.worst,
-        typeof a.bestSolve==='object' ? a.bestSolve?.word : a.bestSolve,
+        t.entropy,t.expected,t.worst,        typeof a.bestSolve==='object' ? a.bestSolve?.word : a.bestSolve,
         typeof a.bestHybrid==='object' ? a.bestHybrid?.word : a.bestHybrid,
         typeof a.bestInfo==='object' ? a.bestInfo?.word : a.bestInfo,
         g.completedAt
@@ -997,7 +1158,8 @@ function downloadBatchCsv(){
       r.guesses??'',
       r.turns.map(t=>t.guess.toUpperCase()).join(' > '),
       r.reason||''
-    ]);  }
+    ]);
+  }
   const csv=rows.map(row=>row.map(v=>`"${String(v).replaceAll('"','""')}"`).join(',')).join('\n');
   const blob=new Blob([csv],{type:'text/csv'});
   const url=URL.createObjectURL(blob);
@@ -1011,6 +1173,10 @@ document.getElementById('batchTest').onclick=runBatch;
 document.getElementById('batchCsv').onclick=downloadBatchCsv;
 
 buildGrid();
+prefillOpeningWord();
+const SHOW_TEST_TOOLS=new URLSearchParams(location.search).get('test')==='1';
+const devTools=document.getElementById('devTools');
+if(devTools) devTools.style.display=SHOW_TEST_TOOLS?'block':'none';
 loadLists();
 </script>
 </body>
