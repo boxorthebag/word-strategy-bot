@@ -31,7 +31,7 @@ button.secondary{background:#ececea;color:#111;border:1px solid #d2d2cf}
 button.danger{background:#9e2727}
 button:disabled{opacity:.45;cursor:not-allowed}
 .grid{display:grid;gap:8px}
-.guessrow{display:grid;grid-template-columns:repeat(5,58px) auto;gap:8px;align-items:center}
+.guessrow{display:grid;grid-template-columns:repeat(5,58px);gap:8px;align-items:center;position:relative;width:max-content}
 .tilewrap{position:relative;width:58px;height:58px}
 .tile{width:58px;height:58px;border:2px solid #cfcfcf;border-radius:7px;text-transform:uppercase;text-align:center;font-size:28px;font-weight:800;padding:0;background:#fff;color:#111}
 .tile.gray{background:var(--gray);border-color:var(--gray);color:#fff}
@@ -40,10 +40,14 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .tile.canucklegreen{background:var(--red);border-color:var(--red);color:#fff}
 .statehit{position:absolute;inset:0;background:transparent;border:0;padding:0;border-radius:7px}
 .statehit:focus{outline:3px solid rgba(0,0,0,.18);outline-offset:2px}
-.rowactions{display:flex;gap:5px;align-items:center;min-width:68px}
+.rowactions{position:absolute;left:100%;margin-left:8px;top:50%;transform:translateY(-50%);display:flex;gap:5px;align-items:center;min-width:68px}
 .rowaction{display:none;width:30px;height:30px;padding:0;border-radius:7px;font-size:18px;line-height:1;background:#ececea;color:#111;border:1px solid #d2d2cf}
 .rowaction.show{display:inline-flex;align-items:center;justify-content:center}
 .rowaction.reject{font-size:20px}
+.tilecolorbtn{position:absolute;bottom:4px;width:11px;height:11px;border:0;border-radius:50%;padding:0;z-index:3;box-shadow:0 0 0 1px rgba(0,0,0,.10)}
+.tilecolorbtn.amber{right:18px;background:var(--yellow)}
+.tilecolorbtn.green{right:4px;background:var(--green)}
+.tilecolorbtn:focus{outline:1px solid rgba(0,0,0,.28);outline-offset:1px}
 .small{font-size:12px;color:var(--muted)}
 .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
 .kpi{background:#f4f4f1;border-radius:10px;padding:10px}
@@ -72,7 +76,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 <header>
   <h1>Word Strategy Bot</h1>
   <span class="badge">Wordle + Canuckle testing</span>
-  <span class="badge">entropy + solve probability + rebuilt Wordle pool v31 (2379 answers)</span>
+  <span class="badge">entropy + solve probability + restored board size v36</span>
 </header>
 
 <main>
@@ -91,7 +95,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
   <div id="guessGrid" class="grid"></div>
   <div class="small" style="margin-top:8px">Type the letters normally. Backspace/Delete erases backward across the whole row, so you can clear a guess without clicking previous squares. Then use the tile control to cycle gray → yellow → green/red. Duplicate-letter handling matches Wordle rules.</div>
 
-  <div class="note" style="margin-top:12px"><b>Easy entry:</b> type each guess straight across. Backspace/Delete walks backward through the row and erases letters automatically. Use the small dot in the lower-right of each tile to change that tile from gray to yellow to green.</div>
+  <div class="note" style="margin-top:12px"><b>Easy entry:</b> type each guess straight across. Backspace/Delete walks backward through the row and erases letters automatically. Each letter has its own <b>amber</b> and <b>green</b> buttons. Press a colour once to mark the letter; press the same colour again to return that letter to gray.</div>
   <div class="row" style="margin-top:14px">
     <button id="analyze">Analyze board</button>
     <button id="reset" class="secondary">Reset</button>
@@ -298,12 +302,35 @@ function buildGrid(){
 
       inp.addEventListener('contextmenu',(e)=>{e.preventDefault(); cycleTile(inp);});
       wrap.appendChild(inp);
-      const b=document.createElement('button'); b.className='statehit'; b.type='button';
-      b.title='Change tile colour'; b.setAttribute('aria-label','Change tile colour');
-      b.addEventListener('click',(e)=>{e.preventDefault(); cycleTile(inp);});
-      b.style.inset='auto 2px 2px auto'; b.style.width='18px'; b.style.height='18px';
-      b.style.borderRadius='50%'; b.style.background='rgba(0,0,0,.12)';
-      wrap.appendChild(b);
+
+      const amberBtn=document.createElement('button');
+      amberBtn.className='tilecolorbtn amber';
+      amberBtn.type='button';
+      amberBtn.title='Amber / present in wrong position';
+      amberBtn.setAttribute('aria-label','Toggle amber');
+      amberBtn.addEventListener('click',(e)=>{
+        e.preventDefault();
+        e.stopPropagation();
+        inp.dataset.state = inp.dataset.state==='1' ? '0' : '1';
+        paintState(inp);
+        refreshRowActions();
+      });
+
+      const greenBtn=document.createElement('button');
+      greenBtn.className='tilecolorbtn green';
+      greenBtn.type='button';
+      greenBtn.title='Green / correct position';
+      greenBtn.setAttribute('aria-label','Toggle green');
+      greenBtn.addEventListener('click',(e)=>{
+        e.preventDefault();
+        e.stopPropagation();
+        inp.dataset.state = inp.dataset.state==='2' ? '0' : '2';
+        paintState(inp);
+        refreshRowActions();
+      });
+
+      wrap.appendChild(amberBtn);
+      wrap.appendChild(greenBtn);
       rowEl.appendChild(wrap); inputs.push(inp); states.push(inp);
       paintState(inp);
     }
@@ -316,8 +343,8 @@ function buildGrid(){
 
     const rejectBtn=document.createElement('button');
     rejectBtn.type='button'; rejectBtn.className='rowaction reject'; rejectBtn.textContent='×';
-    rejectBtn.title='Word not accepted — choose another';
-    rejectBtn.setAttribute('aria-label','Word not accepted');
+    rejectBtn.title='Clear this row';
+    rejectBtn.setAttribute('aria-label','Clear this row');
     rejectBtn.addEventListener('click',()=>rejectGridWord(r));
 
     actions.appendChild(winBtn); actions.appendChild(rejectBtn);
@@ -621,40 +648,23 @@ function markRowSolved(rowIndex){
 }
 
 function rejectGridWord(rowIndex){
-  const bad=rowWord(rowIndex);
-  if(bad.length!==5) return;
-
-  rejectedWords.add(bad);
-  try{localStorage.setItem(REJECTED_KEY,JSON.stringify([...rejectedWords]));}catch(e){}
+  // X only clears this row. It never removes the word from any dictionary.
+  clearGridRow(rowIndex);
+  for(let i=rowIndex+1;i<rows.length;i++) clearGridRow(i);
 
   const prior=completedRowsBefore(rowIndex);
-  clearGridRow(rowIndex);
-
-  // The first guess belongs to the player. If their opener is rejected,
-  // simply clear it and let them choose another opener.
-  if(rowIndex===0 && prior.length===0){
-    rows[0].inputs[0].focus();
-    document.getElementById('nextPlay').style.display='none';
-    return;
-  }
-
   const base=(customList?customList:answerWords);
   const candidates=filterAnswers(base,prior);
-  const choice=chooseNextForBoard(prior,candidates);
 
-  if(choice.word){
-    putWordOnGrid(rowIndex,choice.word);
-    applyKnownGreensToRow(rowIndex,prior);
-    document.getElementById('nextPlay').style.display='block';
-    document.getElementById('nextPlayWord').textContent=choice.word.toUpperCase();
-    document.getElementById('nextPlayWhy').textContent=
-      `Replacement after ${bad.toUpperCase()} was not accepted • ${choice.source} • ${choice.count} candidate${choice.count===1?'':'s'}`;
-    syncControllerFromGrid(prior,choice,candidates);
-  }else{
-    document.getElementById('nextPlay').style.display='block';
-    document.getElementById('nextPlayWord').textContent='CHECK FEEDBACK';
-    document.getElementById('nextPlayWhy').textContent=choice.error||'No replacement available.';
-  }
+  document.getElementById('nextPlay').style.display='none';
+  document.getElementById('recs').innerHTML=
+    prior.length
+      ? '<div class="small">Row cleared. Enter a replacement word, then analyze.</div>'
+      : '<div class="small">Enter your opening word and feedback, then analyze.</div>';
+  document.getElementById('cands').textContent=
+    prior.length ? candidates.map(w=>w.toUpperCase()).join('  ') : '—';
+
+  rows[rowIndex]?.inputs[0]?.focus();
   refreshRowActions();
 }
 
@@ -987,8 +997,7 @@ function finalizeGame(){
       alternatives:x.alternatives||{}
     }))
   };
-  gameLogs.push(entry);
-  logsSave();
+  gameLogs.push(entry);  logsSave();
   renderLogs();
 }
 
@@ -997,7 +1006,8 @@ function paintControllerTurnOnBoard(rowIndex, word, pattern){
   if(!rows || rowIndex<0 || rowIndex>=rows.length) return;
   const r=rows[rowIndex];
   const w=String(word||'').toUpperCase();
-  const p=String(pattern||'00000');  for(let i=0;i<5;i++){
+  const p=String(pattern||'00000');
+  for(let i=0;i<5;i++){
     r.inputs[i].value=w[i]||'';
     r.states[i].dataset.state=p[i]||'0';
     paintState(r.states[i]);
@@ -1365,6 +1375,7 @@ document.getElementById('batchCsv').onclick=downloadBatchCsv;
 buildGrid();
 putWordOnGrid(0,'slate');
 rows[0]?.inputs[0].focus();
+setTimeout(()=>{ if(rowWord(0).length!==5) putWordOnGrid(0,'slate'); },0);
 const SHOW_TEST_TOOLS=new URLSearchParams(location.search).get('test')==='1';
 const devTools=document.getElementById('devTools');
 if(devTools) devTools.style.display=SHOW_TEST_TOOLS?'block':'none';
