@@ -76,7 +76,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 <header>
   <h1>Word Strategy Bot</h1>
   <span class="badge">Wordle + Canuckle testing</span>
-  <span class="badge">entropy + solve probability + row analyze control v37</span>
+  <span class="badge">entropy + solve probability + generalized family probes v38</span>
 </header>
 
 <main>
@@ -218,7 +218,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
   <div class="note">
     <b>Best solve</b> favours a word that can actually be the answer.
     <b>Best information</b> favours the guess that splits the remaining pool most evenly.
-    <b>Hybrid</b> balances both. The controller usually switches to <b>Best solve</b> when the board is strongly constrained. But when several answers form a tight word family—especially a shared two-letter-or-longer ending—and a non-answer probe splits that family substantially better, it temporarily uses a <b>Family probe</b> instead of guessing family members one by one.
+    <b>Hybrid</b> balances both. The controller usually switches to <b>Best solve</b> when the board is strongly constrained. When the remaining answers form a tight family with two or more fixed positions—such as <b>_ILLY</b>, <b>_IGHT</b>, or <b>__A_E</b>—and a probe separates that family better, it temporarily uses a <b>Family probe</b> instead of guessing family members one by one.
   </div>
 </section>
 </main>
@@ -471,6 +471,61 @@ function renderRec(label,o){
     <div class="meta">entropy ${o.H.toFixed(2)} bits • expected pool ${o.expected.toFixed(1)} • worst case ${o.worst} • ${o.splits} feedback patterns${o.eBonus?` • repeat-E bonus +${o.eBonus.toFixed(2)}`:''}</div></div>`;
 }
 
+function familyShape(candidates){
+  const fixed=[], variable=[];
+  if(!candidates.length) return {fixed,variable,sharedPositions:0,pattern:'_____'};
+  for(let pos=0;pos<5;pos++){
+    const ch=candidates[0][pos];
+    if(candidates.every(w=>w[pos]===ch)) fixed.push(pos);
+    else variable.push(pos);
+  }
+  const pattern=[0,1,2,3,4].map(pos=>fixed.includes(pos)?candidates[0][pos].toUpperCase():'_').join('');
+  return {fixed,variable,sharedPositions:fixed.length,pattern};
+}
+
+function scoreFamilyProbe(candidates,br){
+  if(!candidates.length) return null;
+  const hard=document.getElementById('hardMode').checked;
+  const played=new Set(br.map(x=>x[0]));
+  let pool=[...guessWords];
+
+  if(customList && document.getElementById('game').value==='canuckle'){
+    pool=[...new Set([...pool,...customList])];
+  }
+  pool=pool.filter(w=>!played.has(w) && !rejectedWords.has(w));
+
+  // Hard mode must obey every prior clue. Normal mode deliberately may break
+  // known positions because the whole point is to separate a tight family.
+  if(hard) pool=pool.filter(g=>br.every(([old,p])=>feedback(old,g)===p));
+
+  const candSet=new Set(candidates);
+  const answerSet=new Set(answerWords);
+  let best=null;
+  for(const g of pool){
+    const e=entropyFor(g,candidates);
+    const obj={word:g,...e,isCandidate:candSet.has(g),isKnownAnswer:answerSet.has(g)};
+
+    if(
+      !best ||
+      obj.H > best.H + 1e-9 ||
+      (
+        Math.abs(obj.H-best.H)<=1e-9 &&
+        (
+          obj.expected < best.expected - 1e-9 ||
+          (
+            Math.abs(obj.expected-best.expected)<=1e-9 &&
+            (
+              obj.worst < best.worst ||
+              (obj.worst===best.worst && obj.isKnownAnswer && !best.isKnownAnswer)
+            )
+          )
+        )
+      )
+    ) best=obj;
+  }
+  return best;
+}
+
 function chooseNextForBoard(br,candidates){
   const played=new Set(br.map(x=>x[0]));
   if(!candidates.length) return {error:'No candidates match this feedback.',count:0};
@@ -497,36 +552,30 @@ function chooseNextForBoard(br,candidates){
     (greens>=1 && candidates.length<=10) ||
     (confirmed>=2 && candidates.length<=12);
 
-  let sharedSuffix=0;
-  for(let pos=4;pos>=0;pos--){
-    const ch=candidates[0][pos];
-    if(candidates.every(w=>w[pos]===ch)) sharedSuffix++;
-    else break;
-  }
-  let sharedPositions=0;
-  for(let pos=0;pos<5;pos++){
-    const ch=candidates[0][pos];
-    if(candidates.every(w=>w[pos]===ch)) sharedPositions++;
-  }
+  // Detect families by ANY shared positions, not only suffixes.
+  // Examples: _ILLY, _IGHT, _OUND, __A_E, S_A_E, __ING.
+  const shape=familyShape(candidates);
+  const structuralFamily =
+    candidates.length>=4 &&
+    candidates.length<=20 &&
+    shape.sharedPositions>=2 &&
+    shape.variable.length>=1;
 
-  const infoBetterThanSolve =
-    r.bestInfo && r.bestSolve &&
-    !r.bestInfo.isCandidate &&
-    (
-      r.bestInfo.expected <= r.bestSolve.expected * 0.78 ||
-      r.bestInfo.worst <= r.bestSolve.worst - 2 ||
-      r.bestInfo.H >= r.bestSolve.H + 0.40
-    );
-
-  const familyTrap =
-    candidates.length >= 4 &&
-    candidates.length <= 15 &&
-    (sharedSuffix >= 2 || sharedPositions >= 2) &&
-    infoBetterThanSolve;
+  let familyProbe=null;
+  let familyProbeBetter=false;
+  if(structuralFamily && !document.getElementById('hardMode').checked){
+    familyProbe=scoreFamilyProbe(candidates,br);
+    if(familyProbe && r.bestSolve && !familyProbe.isCandidate){
+      familyProbeBetter =
+        familyProbe.expected < r.bestSolve.expected - 1e-9 ||
+        familyProbe.worst < r.bestSolve.worst ||
+        familyProbe.H > r.bestSolve.H + 0.05;
+    }
+  }
 
   let chosen, source;
-  if(familyTrap){
-    chosen=r.bestInfo; source='Family probe';
+  if(structuralFamily && familyProbeBetter){
+    chosen=familyProbe; source=`Family probe ${shape.pattern}`;
   }else if(solveFirst){
     chosen=(r.bestSolve||r.bestHybrid||r.bestInfo); source='Best solve';
   }else{
@@ -948,7 +997,6 @@ function wcChooseNext(){
     candidates.length <= 15 &&
     (sharedSuffix >= 2 || sharedPositions >= 2) &&
     infoBetterThanSolve;
-
   let chosen, source;
   if(familyTrap){
     chosen=r.bestInfo;
@@ -997,7 +1045,8 @@ function finalizeGame(){
       alternatives:x.alternatives||{}
     }))
   };
-  gameLogs.push(entry);  logsSave();
+  gameLogs.push(entry);
+  logsSave();
   renderLogs();
 }
 
