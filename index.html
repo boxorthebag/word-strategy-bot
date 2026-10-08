@@ -76,7 +76,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 <header>
   <h1>Word Strategy Bot</h1>
   <span class="badge">Wordle + Canuckle testing</span>
-  <span class="badge">entropy + solve probability + restored board size v36</span>
+  <span class="badge">entropy + solve probability + row analyze control v37</span>
 </header>
 
 <main>
@@ -337,9 +337,9 @@ function buildGrid(){
     const actions=document.createElement('div'); actions.className='rowactions';
     const winBtn=document.createElement('button');
     winBtn.type='button'; winBtn.className='rowaction win'; winBtn.textContent='✓';
-    winBtn.title='All green — mark this word solved';
-    winBtn.setAttribute('aria-label','Mark all letters green');
-    winBtn.addEventListener('click',()=>markRowSolved(r));
+    winBtn.title='Analyze board';
+    winBtn.setAttribute('aria-label','Analyze board');
+    winBtn.addEventListener('click',()=>analyze());
 
     const rejectBtn=document.createElement('button');
     rejectBtn.type='button'; rejectBtn.className='rowaction reject'; rejectBtn.textContent='×';
