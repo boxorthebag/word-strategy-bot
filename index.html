@@ -44,10 +44,6 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .rowaction{display:none;width:30px;height:30px;padding:0;border-radius:7px;font-size:18px;line-height:1;background:#ececea;color:#111;border:1px solid #d2d2cf}
 .rowaction.show{display:inline-flex;align-items:center;justify-content:center}
 .rowaction.reject{font-size:20px}
-.tilecolorbtn{position:absolute;bottom:4px;width:11px;height:11px;border:0;border-radius:50%;padding:0;z-index:3;box-shadow:0 0 0 1px rgba(0,0,0,.10)}
-.tilecolorbtn.amber{right:18px;background:var(--yellow)}
-.tilecolorbtn.green{right:4px;background:var(--green)}
-.tilecolorbtn:focus{outline:1px solid rgba(0,0,0,.28);outline-offset:1px}
 .small{font-size:12px;color:var(--muted)}
 .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
 .kpi{background:#f4f4f1;border-radius:10px;padding:10px}
@@ -76,7 +72,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 <header>
   <h1>Word Strategy Bot</h1>
   <span class="badge">Wordle + Canuckle testing</span>
-  <span class="badge">entropy + solve probability + curated answers + fallback v42</span>
+  <span class="badge">entropy + solve probability + tap-to-cycle tiles v43</span>
 </header>
 
 <main>
@@ -95,7 +91,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
   <div id="guessGrid" class="grid"></div>
   <div class="small" style="margin-top:8px">Type the letters normally. Backspace/Delete erases backward across the whole row, so you can clear a guess without clicking previous squares. Then use the tile control to cycle gray → yellow → green/red. Duplicate-letter handling matches Wordle rules.</div>
 
-  <div class="note" style="margin-top:12px"><b>Easy entry:</b> type each guess straight across. Backspace/Delete walks backward through the row and erases letters automatically. Each letter has its own <b>amber</b> and <b>green</b> buttons. Press a colour once to mark the letter; press the same colour again to return that letter to gray.</div>
+  <div class="note" style="margin-top:12px"><b>Easy entry:</b> type each guess straight across. Backspace/Delete walks backward through the row and erases letters automatically. Tap or click any filled letter tile to cycle <b>gray → amber → green → gray</b>.</div>
   <div class="row" style="margin-top:14px">
     <button id="analyze">Analyze board</button>
     <button id="reset" class="secondary">Reset</button>
@@ -303,35 +299,14 @@ function buildGrid(){
 
       inp.addEventListener('contextmenu',(e)=>{e.preventDefault(); cycleTile(inp);});
       wrap.appendChild(inp);
-
-      const amberBtn=document.createElement('button');
-      amberBtn.className='tilecolorbtn amber';
-      amberBtn.type='button';
-      amberBtn.title='Amber / present in wrong position';
-      amberBtn.setAttribute('aria-label','Toggle amber');
-      amberBtn.addEventListener('click',(e)=>{
-        e.preventDefault();
-        e.stopPropagation();
-        inp.dataset.state = inp.dataset.state==='1' ? '0' : '1';
-        paintState(inp);
-        refreshRowActions();
+      inp.addEventListener('click',(e)=>{
+        // Once a tile contains a letter, tapping/clicking the tile cycles
+        // gray -> amber -> green -> gray. This gives mobile users a large target.
+        if(inp.value){
+          e.preventDefault();
+          cycleTile(inp);
+        }
       });
-
-      const greenBtn=document.createElement('button');
-      greenBtn.className='tilecolorbtn green';
-      greenBtn.type='button';
-      greenBtn.title='Green / correct position';
-      greenBtn.setAttribute('aria-label','Toggle green');
-      greenBtn.addEventListener('click',(e)=>{
-        e.preventDefault();
-        e.stopPropagation();
-        inp.dataset.state = inp.dataset.state==='2' ? '0' : '2';
-        paintState(inp);
-        refreshRowActions();
-      });
-
-      wrap.appendChild(amberBtn);
-      wrap.appendChild(greenBtn);
       rowEl.appendChild(wrap); inputs.push(inp); states.push(inp);
       paintState(inp);
     }
