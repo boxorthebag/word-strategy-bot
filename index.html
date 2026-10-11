@@ -72,7 +72,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 <header>
   <h1>Word Strategy Bot</h1>
   <span class="badge">Wordle + Canuckle testing</span>
-  <span class="badge">entropy + answer likelihood + tap-to-cycle tiles v44</span>
+  <span class="badge">entropy + stronger answer likelihood + tap-to-cycle tiles v45</span>
 </header>
 
 <main>
@@ -486,8 +486,8 @@ function scoreRecommendations(candidates, br){
     const likelihoodLog=isCandidate ? Math.log2(Math.max(0.05,likelihoodRatio)) : 0;
     const eBonus=repeatEBonus(g,br,candidates);
     const infoScore=e.H+eBonus;
-    const solveScore=infoScore + (isCandidate ? 0.35*likelihoodLog : 0);
-    const hybrid=infoScore + (isCandidate ? 0.34 + 0.18*likelihoodLog : 0) - (e.worst/n)*0.08;
+    const solveScore=infoScore + (isCandidate ? 0.90*likelihoodLog : 0);
+    const hybrid=infoScore + (isCandidate ? 0.34 + 0.34*likelihoodLog : 0) - (e.worst/n)*0.08;
     const obj={word:g,...e,solve,solveScore,likelihoodRatio,infoScore,hybrid,isCandidate,eBonus};
     if(!bestInfo||obj.infoScore>bestInfo.infoScore)bestInfo=obj;
     if(obj.isCandidate && (!bestSolve || obj.solveScore>bestSolve.solveScore+1e-9 ||
