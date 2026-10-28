@@ -72,7 +72,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 <header>
   <h1>Word Strategy Bot</h1>
   <span class="badge">Wordle + Canuckle testing</span>
-  <span class="badge">entropy + staged solve/probe strategy + tap-to-cycle tiles v47</span>
+  <span class="badge">entropy + selective probe strategy + tap-to-cycle tiles v48</span>
 </header>
 
 <main>
@@ -505,7 +505,7 @@ function scoreRecommendations(candidates, br){
     const eBonus=repeatEBonus(g,br,candidates);
     const infoScore=e.H+eBonus+guessFamiliarityBonus(g);
     const solveScore=infoScore + (isCandidate ? 0.80*likelihoodLog : 0);
-    const hybrid=infoScore + (isCandidate ? 0.34 + 0.30*likelihoodLog : 0) - (e.worst/n)*0.08;
+    const hybrid=infoScore + (isCandidate ? 0.42 + 0.34*likelihoodLog : 0) - (e.worst/n)*0.07;
     const obj={word:g,...e,solve,solveScore,likelihoodRatio,infoScore,hybrid,isCandidate,eBonus};
     if(!bestInfo||obj.infoScore>bestInfo.infoScore)bestInfo=obj;
     if(obj.isCandidate && (!bestSolve || obj.solveScore>bestSolve.solveScore+1e-9 ||
@@ -606,11 +606,11 @@ function chooseNextForBoard(br,candidates){
   const greens=greenPositions.size;
   const confirmed=confirmedLetters.size;
   const solveFirst =
-    candidates.length<=3 ||
+    candidates.length<=5 ||
     greens>=2 ||
     confirmed>=3 ||
-    (greens>=1 && candidates.length<=10) ||
-    (confirmed>=2 && candidates.length<=12);
+    (greens>=1 && candidates.length<=12) ||
+    (confirmed>=2 && candidates.length<=14);
 
   // Detect families by ANY shared positions, not only suffixes.
   // Examples: _ILLY, _IGHT, _OUND, __A_E, S_A_E, __ING.
@@ -638,13 +638,14 @@ function chooseNextForBoard(br,candidates){
   // take the probe. As the pool tightens, likelihood becomes more important.
   const earlyProbeBetter =
     br.length<=1 &&
-    candidates.length>=10 &&
+    candidates.length>=14 &&
     r.bestInfo &&
     r.bestSolve &&
     !r.bestInfo.isCandidate &&
     (
-      r.bestInfo.expected <= r.bestSolve.expected*0.90 ||
-      r.bestInfo.H >= r.bestSolve.H+0.18
+      // Require a genuinely large gain, not a marginal entropy edge.
+      r.bestInfo.expected <= r.bestSolve.expected*0.80 ||
+      r.bestInfo.H >= r.bestSolve.H+0.32
     );
 
   let chosen, source;
