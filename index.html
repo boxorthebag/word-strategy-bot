@@ -72,7 +72,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 <header>
   <h1>Word Strategy Bot</h1>
   <span class="badge">Wordle + Canuckle testing</span>
-  <span class="badge">entropy + familiar family probes + tap-to-cycle tiles v50</span>
+  <span class="badge">entropy + familiar early probes + family exits v51</span>
 </header>
 
 <main>
@@ -684,23 +684,46 @@ function chooseNextForBoard(br,candidates){
   // Early in the game, do not let answer-likelihood force a solve too soon.
   // If a pure information play materially reduces the expected remaining pool,
   // take the probe. As the pool tightens, likelihood becomes more important.
-  const earlyProbeBetter =
+  let earlyInfoChoice=r.bestInfo;
+  if(
     br.length<=1 &&
     candidates.length>=14 &&
     r.bestInfo &&
+    !r.bestInfo.isCandidate
+  ){
+    // Prefer a familiar information probe when it is essentially tied with
+    // the raw entropy winner. Avoid obscure words such as REMEN unless their
+    // information advantage is genuinely meaningful.
+    const familiarPool=guessWords
+      .filter(w=>COMMON_FIVE_RANK.has(w) && !played.has(w) && !rejectedHere.has(w))
+      .map(w=>({word:w,...entropyFor(w,candidates)}))
+      .filter(o=>o.H>=r.bestInfo.H-0.12)
+      .sort((a,b)=>
+        b.H-a.H ||
+        a.expected-b.expected ||
+        a.worst-b.worst
+      );
+    if(familiarPool.length) earlyInfoChoice={...familiarPool[0],isCandidate:candidates.includes(familiarPool[0].word)};
+  }
+
+  const earlyProbeBetter =
+    br.length<=1 &&
+    candidates.length>=14 &&
+    earlyInfoChoice &&
     r.bestSolve &&
-    !r.bestInfo.isCandidate &&
+    !earlyInfoChoice.isCandidate &&
     (
-      // Require a genuinely large gain, not a marginal entropy edge.
-      r.bestInfo.expected <= r.bestSolve.expected*0.80 ||
-      r.bestInfo.H >= r.bestSolve.H+0.32
+      earlyInfoChoice.expected <= r.bestSolve.expected*0.80 ||
+      earlyInfoChoice.H >= r.bestSolve.H+0.32
     );
 
   let chosen, source;
-  if(structuralFamily && familyProbeBetter){
+  if(structuralFamily && candidates.length<=3){
+    chosen=(r.bestSolve||r.bestHybrid||r.bestInfo); source='Best solve';
+  }else if(structuralFamily && familyProbeBetter){
     chosen=familyProbe; source=`Family probe ${shape.pattern}`;
   }else if(earlyProbeBetter){
-    chosen=r.bestInfo; source='Information probe';
+    chosen=earlyInfoChoice; source='Information probe';
   }else if(solveFirst){
     chosen=(r.bestSolve||r.bestHybrid||r.bestInfo); source='Best solve';
   }else{
