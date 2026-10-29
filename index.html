@@ -72,7 +72,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 <header>
   <h1>Word Strategy Bot</h1>
   <span class="badge">Wordle + Canuckle testing</span>
-  <span class="badge">entropy + duplicate-aware probes + tap-to-cycle tiles v49</span>
+  <span class="badge">entropy + familiar family probes + tap-to-cycle tiles v50</span>
 </header>
 
 <main>
@@ -587,30 +587,50 @@ function scoreFamilyProbe(candidates,br){
 
   const candSet=new Set(candidates);
   const answerSet=new Set(answerWords);
-  let best=null;
+  const scored=[];
   for(const g of pool){
     const e=entropyFor(g,candidates);
-    const obj={word:g,...e,isCandidate:candSet.has(g),isKnownAnswer:answerSet.has(g)};
-
-    if(
-      !best ||
-      obj.H > best.H + 1e-9 ||
-      (
-        Math.abs(obj.H-best.H)<=1e-9 &&
-        (
-          obj.expected < best.expected - 1e-9 ||
-          (
-            Math.abs(obj.expected-best.expected)<=1e-9 &&
-            (
-              obj.worst < best.worst ||
-              (obj.worst===best.worst && obj.isKnownAnswer && !best.isKnownAnswer)
-            )
-          )
-        )
-      )
-    ) best=obj;
+    scored.push({
+      word:g,...e,
+      isCandidate:candSet.has(g),
+      isKnownAnswer:answerSet.has(g),
+      isFamiliar:COMMON_FIVE_RANK.has(g)
+    });
   }
-  return best;
+  scored.sort((a,b)=>
+    b.H-a.H ||
+    a.expected-b.expected ||
+    a.worst-b.worst
+  );
+  if(!scored.length) return null;
+
+  const maxH=scored[0].H;
+  // If a normal word is within 0.10 bits of the maximum information score,
+  // take the normal word. A microscopic entropy edge is not worth an obscure
+  // family probe such as VUGHY.
+  const near=scored.filter(o=>o.H>=maxH-0.10);
+  const familiar=near.filter(o=>o.isFamiliar);
+  if(familiar.length){
+    familiar.sort((a,b)=>
+      b.H-a.H ||
+      a.expected-b.expected ||
+      a.worst-b.worst ||
+      Number(b.isKnownAnswer)-Number(a.isKnownAnswer)
+    );
+    return familiar[0];
+  }
+
+  const known=near.filter(o=>o.isKnownAnswer);
+  if(known.length){
+    known.sort((a,b)=>
+      b.H-a.H ||
+      a.expected-b.expected ||
+      a.worst-b.worst
+    );
+    return known[0];
+  }
+
+  return scored[0];
 }
 
 function chooseNextForBoard(br,candidates){
