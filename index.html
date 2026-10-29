@@ -72,7 +72,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 <header>
   <h1>Word Strategy Bot</h1>
   <span class="badge">Wordle + Canuckle testing</span>
-  <span class="badge">entropy + selective probe strategy + tap-to-cycle tiles v48</span>
+  <span class="badge">entropy + duplicate-aware probes + tap-to-cycle tiles v49</span>
 </header>
 
 <main>
@@ -459,7 +459,28 @@ function candidateLetterStats(candidates){
   const freq={}; for(const a of candidates){for(const ch of new Set(a))freq[ch]=(freq[ch]||0)+1;}
   return freq;
 }
-function repeatEBonus(guess, br, candidates){ return 0; }
+function candidateDuplicateStats(candidates){
+  const freq={};
+  for(const a of candidates){
+    const counts={};
+    for(const ch of a) counts[ch]=(counts[ch]||0)+1;
+    for(const [ch,n] of Object.entries(counts)){
+      if(n>=2) freq[ch]=(freq[ch]||0)+1;
+    }
+  }
+  return freq;
+}
+function repeatEBonus(guess, br, candidates){
+  if(!candidates.length) return 0;
+  const dup=candidateDuplicateStats(candidates);
+  const counts={};
+  for(const ch of guess) counts[ch]=(counts[ch]||0)+1;
+  let bonus=0;
+  for(const [ch,n] of Object.entries(counts)){
+    if(n>=2) bonus += 0.12*((dup[ch]||0)/candidates.length);
+  }
+  return bonus;
+}
 function scoreRecommendations(candidates, br){
   const hard=document.getElementById('hardMode').checked;
   const alreadyPlayed=new Set(br.map(x=>x[0]));
@@ -483,8 +504,15 @@ function scoreRecommendations(candidates, br){
   if(hard) pool=pool.filter(g=>br.every(([old,p])=>feedback(old,g)===p));
   // For speed, score all candidates plus up to 3000 useful probe words.
   const lf=candidateLetterStats(candidates);
+  const dup=candidateDuplicateStats(candidates);
   const probes=pool.map(w=>{
-    let s=0; for(const ch of new Set(w)) s+=(lf[ch]||0);
+    let s=0;
+    const counts={};
+    for(const ch of w) counts[ch]=(counts[ch]||0)+1;
+    for(const ch of Object.keys(counts)) s+=(lf[ch]||0);
+    for(const [ch,n] of Object.entries(counts)){
+      if(n>=2) s += 0.55*(dup[ch]||0);
+    }
     return [w,s];
   }).sort((a,b)=>b[1]-a[1]).slice(0,Math.min(3000,pool.length)).map(x=>x[0]);
   const scorePool=[...new Set([...candidates.filter(w=>!alreadyPlayed.has(w) && !rejectedWords.has(w) && !rejectedHere.has(w)),...probes])];
