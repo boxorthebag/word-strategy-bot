@@ -72,7 +72,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 <header>
   <h1>Word Strategy Bot</h1>
   <span class="badge">Wordle + Canuckle testing</span>
-  <span class="badge">entropy + refreshed NYT answers + balanced likelihood v53</span>
+  <span class="badge">entropy + fallback-aware perfect probes + balanced likelihood v54</span>
 </header>
 
 <main>
@@ -587,31 +587,55 @@ function scoreFamilyProbe(candidates,br){
 
   const candSet=new Set(candidates);
   const answerSet=new Set(answerWords);
+  const outside=filterAnswers(guessWords,br)
+    .filter(w=>!candSet.has(w) && !rejectedWords.has(w));
+
   const scored=[];
   for(const g of pool){
     const e=entropyFor(g,candidates);
+    let escapeRate=0;
+
+    // Only use fallback-awareness when the probe is already a PERFECT
+    // separator of the curated family. Then entropy cannot distinguish the
+    // probes, so prefer the one that is more likely to reveal an omitted
+    // answer immediately (e.g. CORGI over BRING for the __ATE / PRATE case).
+    if(e.worst===1 && outside.length){
+      const knownPatterns=new Set(candidates.map(a=>feedback(g,a)));
+      let novel=0;
+      for(const w of outside){
+        if(!knownPatterns.has(feedback(g,w))) novel++;
+      }
+      escapeRate=novel/outside.length;
+    }
+
     scored.push({
       word:g,...e,
+      escapeRate,
+      perfectScore:e.worst===1 ? e.H + 0.30*escapeRate : e.H,
       isCandidate:candSet.has(g),
       isKnownAnswer:answerSet.has(g),
       isFamiliar:COMMON_FIVE_RANK.has(g)
     });
   }
+
   scored.sort((a,b)=>
+    b.perfectScore-a.perfectScore ||
     b.H-a.H ||
     a.expected-b.expected ||
     a.worst-b.worst
   );
   if(!scored.length) return null;
 
-  const maxH=scored[0].H;
-  // If a normal word is within 0.10 bits of the maximum information score,
-  // take the normal word. A microscopic entropy edge is not worth an obscure
-  // family probe such as VUGHY.
-  const near=scored.filter(o=>o.H>=maxH-0.10);
+  const maxScore=scored[0].perfectScore;
+  const near=scored.filter(o=>o.perfectScore>=maxScore-0.10);
+
+  // Familiarity still protects normal family probes from nonsense such as
+  // VUGHY. A perfect separator with a large escape-detection advantage can
+  // beat that preference; an ordinary non-perfect probe cannot.
   const familiar=near.filter(o=>o.isFamiliar);
   if(familiar.length){
     familiar.sort((a,b)=>
+      b.perfectScore-a.perfectScore ||
       b.H-a.H ||
       a.expected-b.expected ||
       a.worst-b.worst ||
@@ -623,6 +647,7 @@ function scoreFamilyProbe(candidates,br){
   const known=near.filter(o=>o.isKnownAnswer);
   if(known.length){
     known.sort((a,b)=>
+      b.perfectScore-a.perfectScore ||
       b.H-a.H ||
       a.expected-b.expected ||
       a.worst-b.worst
